@@ -25,10 +25,14 @@ definition riscv_global_pt_ptr :: obj_ref
   where
   "riscv_global_pt_ptr = pptr_base + 0x2000"
 
-(* Sufficiently aligned for irq type + cte_level_bits *)
+(* Sufficiently aligned for irq type + cte_level_bits. 0x3000 (12 trailing zero bits) was
+   enough for HiFive's irqBits=6 (needs 11 bits) but not for platforms with larger irqBits,
+   e.g. PolarFire's irqBits=8 (needs 13 bits). Bumped to 0x4000 (14 trailing zero bits) to
+   match the same fix AARCH64/Init_A.thy already made (0xc000) for its own multi-platform
+   irqBits variation. *)
 definition init_irq_node_ptr :: obj_ref
   where
-  "init_irq_node_ptr = pptr_base + 0x3000"
+  "init_irq_node_ptr = pptr_base + 0x4000"
 
 (* The highest user-level virtual address that is still canonical.
    It can be larger than user_vtop, which is the highest address we allow to be mapped.
