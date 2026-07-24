@@ -212,13 +212,35 @@ definition "idle_tcb_ptr = pptr_base + 0x1000"
    the address-order-sensitive s0H_pspace_distinct' case analysis), we shift these objects up
    uniformly by one slot, keeping the node between riscv_global_pt(0x2000) and Low_pt and all
    objects in increasing address order. Arbitrary witness addresses. *)
+(* Address of the Low partition's leaf page table -- the table reached from Low_pd_ptr at
+   index 0, which is what maps the shared page into Low's address space. The particular
+   number is an arbitrary witness: the proofs only require that it is page-aligned, holds
+   no other object, and lies in increasing address order relative to its neighbours (see
+   the shift rationale above). *)
 definition "Low_pt_ptr = pptr_base + 0x6000"
+
+(* The High partition's leaf page table, one 0x1000 slot above Low's. Plays the same role
+   for High as Low_pt_ptr does for Low: it is the table through which High reaches the
+   shared page, read-only. Same constraints, same arbitrariness. *)
 definition "High_pt_ptr = pptr_base + 0x7000"
 
+(* Address of the Low partition's ROOT page table -- the top-level table that Low's TCB
+   names as its vtable and that Low's ASID pool maps its ASID to. Despite the legacy "pd"
+   (page directory) name inherited from the ARM port, on RISCV64 every level is a page
+   table; this is simply the root of Low's vspace. Arbitrary witness address. *)
 definition "Low_pd_ptr = pptr_base + 0x8000"
+
+(* The High partition's root page table, the counterpart of Low_pd_ptr for High. Named
+   "pd" for the same legacy reason. Arbitrary witness address. *)
 definition "High_pd_ptr = pptr_base + 0x9000"
 
+(* Address of the Low partition's ASID pool object: the table that maps Low_asid to Low's
+   root page table (Low_pd_ptr), so that Low's vspace can be installed on a context
+   switch. Arbitrary witness address. *)
 definition "Low_pool_ptr = pptr_base + 0xA000"
+
+(* The High partition's ASID pool, mapping High_asid to High_pd_ptr. Counterpart of
+   Low_pool_ptr. Arbitrary witness address. *)
 definition "High_pool_ptr = pptr_base + 0xB000"
 
 definition "Low_cnode_ptr = pptr_base + 0x10000"
