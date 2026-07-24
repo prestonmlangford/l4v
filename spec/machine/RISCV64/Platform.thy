@@ -172,9 +172,12 @@ definition minIRQ :: "irq"
   where
   "minIRQ \<equiv> 0"
 
+(* maxIRQ is defined via Kernel_Config on this architecture, so that platforms with different
+   maxIRQ values (e.g. PolarFire's 187 vs HiFive's 54) are handled uniformly instead of
+   hardcoding a single platform's value here. Mirrors AARCH64/Platform.thy. *)
 definition maxIRQ :: "'a::numeral"
   where
-  "maxIRQ \<equiv> 54"
+  "maxIRQ \<equiv> Kernel_Config.maxIRQ"
 
 (* Reserved by C to represent "not an IRQ" *)
 definition irqInvalid :: "irq"

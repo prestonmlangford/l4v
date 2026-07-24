@@ -1510,7 +1510,7 @@ lemma map_to_ctes_kh0H:
   apply (drule shiftl_less_t2n'[where n=5])
    apply simp
   apply simp
-  apply (drule plus_one_helper[where n="0x7FF", simplified])
+  apply (drule plus_one_helper[where n="0x1FFF", simplified])
   apply (elim disjE)
          apply (unat_arith+)[7]
   apply (drule int_not_emptyD)
@@ -1951,7 +1951,7 @@ lemma pspace_distinct'_split:
   done
 
 lemma irq_node_offs_range_def2:
-  "irq_node_offs_range = {x. init_irq_node_ptr \<le> x \<and> x \<le> init_irq_node_ptr + 0x7E0} \<inter>
+  "irq_node_offs_range = {x. init_irq_node_ptr \<le> x \<and> x \<le> init_irq_node_ptr + 0x1FE0} \<inter>
                          {x. is_aligned x 5}"
   apply (safe, simp_all add: irq_node_offs_range_def add.commute)
   by (auto dest: word_less_sub_1 simp: s0_ptr_defs elim: dual_order.strict_trans2[rotated])
@@ -3416,7 +3416,8 @@ lemma s0H_invs:
   apply (rule conjI)
    apply (clarsimp simp: valid_machine_state'_def s0H_internal_def machine_state0_def)
   apply (rule conjI)
-   apply (clarsimp simp: irqs_masked'_def s0H_internal_def maxIRQ_def timer_irq_def irqInvalid_def)
+   apply (clarsimp simp: irqs_masked'_def s0H_internal_def maxIRQ_def Kernel_Config.maxIRQ_def
+                         timer_irq_def irqInvalid_def)
   apply (rule conjI)
    apply (clarsimp simp: sym_heap_def opt_map_def projectKOs split: option.splits)
    using kh0H_dom_tcb
@@ -3681,7 +3682,7 @@ lemma s0_srel:
                apply (subgoal_tac "a \<notin> irq_node_offs_range")
                 prefer 2
                 apply (clarsimp simp: irq_node_offs_range_def s0_ptr_defs)
-                apply (erule_tac x="ucast (a - 0xFFFFFFC000003000 >> 5)" in allE)
+                apply (erule_tac x="ucast (a - 0xFFFFFFC000004000 >> 5)" in allE)
                 apply (subst (asm) ucast_ucast_len)
                  apply (rule shiftr_less_t2n)
                  apply (rule word_less_sub_right)

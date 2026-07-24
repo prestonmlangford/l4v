@@ -329,7 +329,7 @@ lemma decodeInvocation_ccorres:
      apply (frule cap_get_tag_isCap_unfolded_H_cap, drule (1) cap_get_tag_to_H)
      apply fastforce
     apply (frule cap_get_tag_isCap_unfolded_H_cap, drule (1) cap_get_tag_to_H)
-    apply (fastforce simp: cap_endpoint_cap_lift_def mask_eq_ucast_eq)
+    apply (fastforce simp: cap_endpoint_cap_lift_def mask_eq_ucast_eq irq_len_val)
    apply (frule ccap_relation_ep_helpers)
     apply (clarsimp simp: cap_get_tag_isCap isEndpointCap_def)
    apply clarsimp
@@ -1526,11 +1526,8 @@ lemma scast_maxIRQ_less_eq:
 lemmas scast_maxIRQ_is_less = scast_maxIRQ_less_eq [THEN iffD1]
 
 lemma ucast_maxIRQ_is_less:
-  "SCAST(32 signed \<rightarrow> 64) Kernel_C.maxIRQ < UCAST(6 \<rightarrow> 64) irq \<Longrightarrow> scast Kernel_C.maxIRQ < irq"
-  apply (clarsimp simp: scast_def Kernel_C.maxIRQ_def)
-  apply (subgoal_tac "LENGTH(6) \<le> LENGTH(64)")
-  apply (drule less_ucast_ucast_less[where x= "0x36" and y="irq"])
-    by (simp)+
+  "SCAST(32 signed \<rightarrow> 64) Kernel_C.maxIRQ < UCAST(irq_len \<rightarrow> 64) irq \<Longrightarrow> scast Kernel_C.maxIRQ < irq"
+  by (simp add: Kernel_C_maxIRQ)
 
 lemma validIRQcastingLess:
   "Kernel_C.maxIRQ <s ucast b \<Longrightarrow> maxIRQ < b"
@@ -1542,13 +1539,9 @@ lemma scast_maxIRQ_is_not_less:
   by (simp add: scast_maxIRQ_less_eq)
 
 lemma ucast_maxIRQ_is_not_less:
-  "\<not> (SCAST(32 signed \<rightarrow> 64) Kernel_C.maxIRQ < UCAST(6 \<rightarrow> 64) irq) \<Longrightarrow> \<not> (scast Kernel_C.maxIRQ < irq)"
-  apply (clarsimp simp: scast_def Kernel_C.maxIRQ_def)
-  apply (subgoal_tac "LENGTH(6) \<le> LENGTH(64)")
-   prefer 2
-   apply simp
-  apply (erule notE)
-  using ucast_up_mono by fastforce
+  "\<not> (SCAST(32 signed \<rightarrow> 64) Kernel_C.maxIRQ < UCAST(irq_len \<rightarrow> 64) irq) \<Longrightarrow>
+   \<not> (scast Kernel_C.maxIRQ < irq)"
+  by (simp add: Kernel_C_maxIRQ)
 
 lemma ccorres_return_void_C_Seq:
   "ccorres_underlying sr \<Gamma> r rvxf arrel xf P P' hs X (return_void_C) \<Longrightarrow>
@@ -1693,7 +1686,7 @@ lemma handleInterrupt_ccorres:
       apply (frule cap_get_tag_isCap_unfolded_H_cap)
       apply (frule cap_get_tag_to_H, assumption)
       apply (clarsimp simp: to_bool_def)
-     apply (cut_tac un_ui_le[where b = "54::machine_word" and a = irq,
+     apply (cut_tac un_ui_le[where b = "187::machine_word" and a = irq,
             simplified word_size])
      apply (simp add: ucast_eq_0 is_up_def source_size_def
                       target_size_def word_size unat_gt_0 not_less

@@ -206,14 +206,20 @@ definition "Low_tcb_ptr \<equiv> pptr_base + 0x400"
 definition "High_tcb_ptr = pptr_base + 0x800"
 definition "idle_tcb_ptr = pptr_base + 0x1000"
 
-definition "Low_pt_ptr = pptr_base + 0x4000"
-definition "High_pt_ptr = pptr_base + 0x5000"
+(* Shifted up from 0x4000/0x5000/0x7000/0x8000/0x9000/0xA000: PolarFire's irqBits=8 makes
+   the IRQ CNode 2^13 bytes, so interrupt_irq_node = [pptr_base+0x4000, +0x6000) would overlap
+   Low_pt/High_pt at their old 0x4000/0x5000. Rather than move them out of order (which breaks
+   the address-order-sensitive s0H_pspace_distinct' case analysis), we shift these objects up
+   uniformly by one slot, keeping the node between riscv_global_pt(0x2000) and Low_pt and all
+   objects in increasing address order. Arbitrary witness addresses. *)
+definition "Low_pt_ptr = pptr_base + 0x6000"
+definition "High_pt_ptr = pptr_base + 0x7000"
 
-definition "Low_pd_ptr = pptr_base + 0x7000"
-definition "High_pd_ptr = pptr_base + 0x8000"
+definition "Low_pd_ptr = pptr_base + 0x8000"
+definition "High_pd_ptr = pptr_base + 0x9000"
 
-definition "Low_pool_ptr = pptr_base + 0x9000"
-definition "High_pool_ptr = pptr_base + 0xA000"
+definition "Low_pool_ptr = pptr_base + 0xA000"
+definition "High_pool_ptr = pptr_base + 0xB000"
 
 definition "Low_cnode_ptr = pptr_base + 0x10000"
 definition "High_cnode_ptr = pptr_base + 0x18000"
@@ -662,7 +668,7 @@ lemma irq_node_offs_min:
   done
 
 lemma irq_node_offs_max:
-  "init_irq_node_ptr + (ucast (irq:: irq) << 5) < init_irq_node_ptr + 0x7E1"
+  "init_irq_node_ptr + (ucast (irq:: irq) << 5) < init_irq_node_ptr + 0x1FE1"
   apply (simp add: s0_ptr_defs shiftl_t2n)
   apply (cut_tac x=irq and 'a=64 in ucast_less)
    apply simp
@@ -670,7 +676,7 @@ lemma irq_node_offs_max:
   done
 
 definition irq_node_offs_range where
-  "irq_node_offs_range \<equiv> {x. init_irq_node_ptr \<le> x \<and> x < init_irq_node_ptr + 0x7E1}
+  "irq_node_offs_range \<equiv> {x. init_irq_node_ptr \<le> x \<and> x < init_irq_node_ptr + 0x1FE1}
                        \<inter> {x. is_aligned x 5}"
 
 lemma irq_node_offs_in_range:
@@ -684,7 +690,7 @@ lemma irq_node_offs_range_correct:
   "x \<in> irq_node_offs_range
    \<Longrightarrow> \<exists>irq. x = init_irq_node_ptr + (ucast (irq:: irq) << 5)"
   apply (clarsimp simp: irq_node_offs_min irq_node_offs_max irq_node_offs_range_def s0_ptr_defs)
-  apply (rule_tac x="ucast ((x - 0xFFFFFFC000003000) >> 5)" in exI)
+  apply (rule_tac x="ucast ((x - 0xFFFFFFC000004000) >> 5)" in exI)
   apply (clarsimp simp: ucast_ucast_mask)
   apply (subst aligned_shiftr_mask_shiftl)
    apply (rule aligned_sub_aligned)
@@ -692,7 +698,7 @@ lemma irq_node_offs_range_correct:
     apply (simp add: is_aligned_def)
    apply simp
   apply simp
-  apply (rule_tac n=11 in mask_eqI)
+  apply (rule_tac n=13 in mask_eqI)
    apply (subst mask_add_aligned)
     apply (simp add: is_aligned_def)
    apply (simp add: mask_twice)
@@ -705,9 +711,9 @@ lemma irq_node_offs_range_correct:
   apply (subst add_mask_lower_bits)
     apply (simp add: is_aligned_def)
    apply clarsimp
-  apply (cut_tac x=x and y="0xFFFFFFC0000037E0" and n=14 in neg_mask_mono_le)
+  apply (cut_tac x=x and y="0xFFFFFFC000005FE0" and n=14 in neg_mask_mono_le)
    apply (force dest: word_less_sub_1)
-  apply (drule_tac n=11 in aligned_le_sharp)
+  apply (drule_tac n=13 in aligned_le_sharp)
    apply (simp add: is_aligned_def)
   apply (simp add: mask_def is_aligned_mask)
   apply word_bitwise
@@ -1346,13 +1352,13 @@ lemma pspace_distinct_s0:
    apply word_bitwise
    apply auto[1]
   apply (elim disjE)
-  (* slow *)
-  by (simp | clarsimp simp: kh0_obj_def cte_level_bits_def s0_ptr_defs pte_bits_def bit_simps
-           | fastforce
-           | clarsimp simp: irq_node_offs_range_def s0_ptr_defs,
-             drule_tac x="0x1F" in word_plus_strict_mono_right, simp, simp add: add.commute,
-             drule(1) notE[rotated, OF less_trans, OF _ _ leD, rotated 2]
-           | drule(1) notE[rotated, OF le_less_trans, OF _ _ leD, rotated 2], simp, assumption)+
+  (* Concrete-concrete object pairs close via simp_all; the remaining node-vs-object pairs
+     then have concrete bounds and close via range-unfold + unat_arith. This replaces the
+     original fastforce-based combinator, which became pathologically slow once the witness
+     objects were relocated for PolarFire's larger (2^13) IRQ node. *)
+  apply (simp_all add: kh0_obj_def cte_level_bits_def s0_ptr_defs pte_bits_def bit_simps)
+  apply (all \<open>solves \<open>clarsimp simp: irq_node_offs_range_def s0_ptr_defs, unat_arith\<close>\<close>)
+  done
 
 lemma valid_pspace_s0[simp]:
   "valid_pspace s0_internal"
@@ -1500,13 +1506,13 @@ lemma valid_irq_node_s0[simp]:
    apply (rule injI)
    apply simp
    apply (rule ccontr)
-   apply (rule_tac bnd="0x40" and 'a=64 in shift_distinct_helper[rotated 3])
+   apply (rule_tac bnd="0x100" and 'a=64 in shift_distinct_helper[rotated 3])
         apply assumption
        apply simp
       apply simp
-     apply (rule ucast_less[where 'b=6, simplified])
+     apply (rule ucast_less[where 'b=8, simplified])
      apply simp
-    apply (rule ucast_less[where 'b=6, simplified])
+    apply (rule ucast_less[where 'b=8, simplified])
     apply simp
    apply (rule notI)
    apply (drule ucast_up_inj)

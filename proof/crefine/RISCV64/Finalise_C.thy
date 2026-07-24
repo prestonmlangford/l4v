@@ -978,11 +978,11 @@ lemma unbindMaybeNotification_ccorres:
 (* TODO: move *)
 definition
   irq_opt_relation_def:
-  "irq_opt_relation (airq :: (6 word) option) (cirq :: machine_word) \<equiv>
+  "irq_opt_relation (airq :: (irq_len word) option) (cirq :: machine_word) \<equiv>
        case airq of
          Some irq \<Rightarrow> (cirq = ucast irq \<and>
                       irq \<noteq> ucast irqInvalid \<and>
-                      ucast irq \<le> UCAST(32 signed \<rightarrow> 6) Kernel_C.maxIRQ)
+                      ucast irq \<le> UCAST(32 signed \<rightarrow> irq_len) Kernel_C.maxIRQ)
        | None \<Rightarrow> cirq = ucast irqInvalid"
 
 lemma finaliseCap_True_cases_ccorres:
@@ -1684,7 +1684,7 @@ lemma cteDeleteOne_ccorres:
 
 lemma getIRQSlot_ccorres_stuff:
   "\<lbrakk> (s, s') \<in> rf_sr \<rbrakk> \<Longrightarrow>
-   CTypesDefs.ptr_add intStateIRQNode_Ptr (uint (irq :: 6 word))
+   CTypesDefs.ptr_add intStateIRQNode_Ptr (uint (irq :: irq_len word))
      = Ptr (irq_node' s + 2 ^ cte_level_bits * ucast irq)"
   apply (clarsimp simp add: rf_sr_def cstate_relation_def Let_def
                             cinterrupt_relation_def)
@@ -1747,21 +1747,18 @@ lemma Zombie_new_spec:
   done
 
 lemma irq_opt_relation_Some_ucast:
-  "\<lbrakk> x && mask 6 = x; ucast x \<noteq> irqInvalid;
-    ucast x \<le> (scast Kernel_C.maxIRQ :: 6 word) \<or> x \<le> (scast Kernel_C.maxIRQ :: machine_word) \<rbrakk>
+  "\<lbrakk> x && mask LENGTH(irq_len) = x; ucast x \<noteq> irqInvalid;
+     (ucast x :: irq) \<le> scast Kernel_C.maxIRQ \<or> x \<le> scast Kernel_C.maxIRQ \<rbrakk>
    \<Longrightarrow> irq_opt_relation (Some (ucast x)) x"
   unfolding irq_opt_relation_def
-  apply simp
-  using ucast_ucast_mask[where x=x and 'a=6, symmetric]
-  apply (simp add: irq_opt_relation_def)
-  apply (clarsimp simp: irqInvalid_def Kernel_C.maxIRQ_def)
-  apply (simp only: unat_arith_simps )
-  apply (clarsimp simp: word_le_nat_alt Kernel_C.maxIRQ_def)
+  apply (simp add: and_mask_eq_iff_le_mask Kernel_C_maxIRQ)
+  apply (rule conjI, solves \<open>simp add: ucast_ucast_len mask_def order_le_less_trans\<close>)
+  apply (clarsimp simp: irqInvalid_def mask_def unat_arith_simps unat_ucast)
   done
 
 lemma ccap_relation_IRQHandler_mask:
   "\<lbrakk> ccap_relation acap ccap; isIRQHandlerCap acap \<rbrakk>
-    \<Longrightarrow> capIRQ_CL (cap_irq_handler_cap_lift ccap) && mask 6
+    \<Longrightarrow> capIRQ_CL (cap_irq_handler_cap_lift ccap) && mask irq_len
         = capIRQ_CL (cap_irq_handler_cap_lift ccap)"
   apply (simp only: cap_get_tag_isCap[symmetric])
   apply (drule ccap_relation_c_valid_cap)
@@ -2247,16 +2244,15 @@ lemma finaliseCap_ccorres:
     apply clarsimp
     apply (frule cap_get_tag_to_H, erule(1) cap_get_tag_isCap [THEN iffD2])
     apply (frule(1) ccap_relation_IRQHandler_mask)
-    apply (clarsimp simp: isCap_simps irqInvalid_def valid_cap'_def)
-    apply (rule irq_opt_relation_Some_ucast)
-      apply fastforce
-     apply (simp add: irqInvalid_def)
-    apply (simp add: Kernel_C.maxIRQ_def maxIRQ_def)
+    apply (clarsimp simp: isCap_simps irqInvalid_def valid_cap'_def irq_len_val maxIRQ_def)
+    apply (rule irq_opt_relation_Some_ucast
+            ; fastforce simp: mask_def irqInvalid_def and_mask_eq_iff_le_mask
+                              Kernel_C_maxIRQ irq_len_val)
    apply fastforce
   apply clarsimp
   apply (frule cap_get_tag_to_H, erule(1) cap_get_tag_isCap [THEN iffD2])
   apply (frule(1) ccap_relation_IRQHandler_mask)
-  apply (clarsimp simp add:mask_eq_ucast_eq)
+  apply (clarsimp simp: mask_eq_ucast_eq irq_len_val)
   done
   end
 

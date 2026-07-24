@@ -51,7 +51,7 @@ lemma ptr_add_assertion_irq_guard:
 
 lemma cte_at_irq_node':
   "invs' s \<Longrightarrow>
-    cte_at' (irq_node' s + 2 ^ cte_level_bits * ucast (irq :: 6 word)) s"
+    cte_at' (irq_node' s + 2 ^ cte_level_bits * ucast (irq :: irq_len word)) s"
   by (clarsimp simp: invs'_def valid_state'_def valid_irq_node'_def
                      cte_level_bits_def real_cte_at' cteSizeBits_def shiftl_t2n)
 
@@ -92,7 +92,7 @@ proof -
                     ghost_assertion_data_set_def)
   apply (clarsimp simp: cte_at_irq_node' ucast_nat_def)
   apply (clarsimp simp: cte_wp_at_ctes_of badge_derived'_def
-                        Collect_const_mem unat_gt_0 valid_cap_simps' maxIRQ_def)
+                        Collect_const_mem unat_gt_0 valid_cap_simps' maxIRQ_def Kernel_Config.maxIRQ_def)
   apply (drule word_le_nat_alt[THEN iffD1])
   apply clarsimp
   apply (drule valid_globals_ex_cte_cap_irq[where irq=irq])
@@ -102,7 +102,7 @@ qed
 
 lemma invokeIRQHandler_ClearIRQHandler_ccorres:
   "ccorres dc xfdc
-          (invs' and (\<lambda>s. weak_sch_act_wf (ksSchedulerAction s) s) and K(irq \<le> 0xFF))
+          (invs' and (\<lambda>s. weak_sch_act_wf (ksSchedulerAction s) s))
           (UNIV \<inter> {s. irq_' s = ucast irq}) []
       (InterruptDecls_H.invokeIRQHandler (ClearIRQHandler irq))
       (Call invokeIRQHandler_ClearIRQHandler_'proc)"
@@ -121,10 +121,8 @@ lemma invokeIRQHandler_ClearIRQHandler_ccorres:
    apply (simp add: guard_is_UNIV_def ghost_assertion_data_get_def
                     ghost_assertion_data_set_def)
   apply (clarsimp simp: cte_at_irq_node' ucast_nat_def)
-  apply (drule word_le_nat_alt[THEN iffD1])
-  apply (auto simp add:Word.uint_up_ucast)
-  apply (case_tac "of_int (uint irq) \<noteq> 0 \<longrightarrow> 0 < unat irq")
-   by (auto simp: Collect_const_mem unat_eq_0)
+  apply (unat_arith, auto) (* only word type bounds should be left *)
+  done
 
 
 lemma ntfn_case_can_send:
@@ -276,22 +274,20 @@ lemma decodeIRQHandlerInvocation_ccorres:
      apply (auto dest: st_tcb_at_idle_thread' ctes_of_valid')[6]
     apply (drule ctes_of_valid')
      apply fastforce
-    apply (clarsimp simp add:valid_cap_simps' maxIRQ_def)
-    apply (erule order.trans,simp)
-  apply (auto dest: st_tcb_at_idle_thread' ctes_of_valid')
+    apply (auto dest: st_tcb_at_idle_thread' ctes_of_valid')
   done
 
 declare mask_of_mask[simp]
 
 lemma ucast_maxIRQ_le_eq:
-  "UCAST(6 \<rightarrow> 64) irq \<le> SCAST(32 signed \<rightarrow> 64) Kernel_C.maxIRQ \<Longrightarrow>
-          irq \<le> SCAST(32 signed \<rightarrow> 6) Kernel_C.maxIRQ"
-  apply (subst ucast_le_ucast_6_64[symmetric])
+  "UCAST(irq_len \<rightarrow> 64) irq \<le> SCAST(int_literal_len \<rightarrow> 64) Kernel_C.maxIRQ \<Longrightarrow>
+          irq \<le> SCAST(int_literal_len \<rightarrow> irq_len) Kernel_C.maxIRQ"
+  apply (subst ucast_le_ucast[where 'a=irq_len and 'b=machine_word_len, simplified, symmetric])
   by (clarsimp simp: ucast_up_ucast is_up Kernel_C.maxIRQ_def)
 
 lemma ucast_maxIRQ_le_eq':
-  "UCAST(6 \<rightarrow> 64) irq \<le> SCAST(32 signed \<rightarrow> 64) Kernel_C.maxIRQ \<Longrightarrow> irq \<le> maxIRQ"
-  apply (clarsimp simp: Kernel_C.maxIRQ_def maxIRQ_def)
+  "UCAST(irq_len \<rightarrow> 64) irq \<le> SCAST(int_literal_len \<rightarrow> 64) Kernel_C.maxIRQ \<Longrightarrow> irq \<le> maxIRQ"
+  apply (clarsimp simp: Kernel_C.maxIRQ_def maxIRQ_def Kernel_Config.maxIRQ_def)
   by word_bitwise
 
 lemma invokeIRQControl_expanded_ccorres:
@@ -321,11 +317,11 @@ lemma invokeIRQControl_expanded_ccorres:
   apply (clarsimp simp: is_simple_cap'_def isCap_simps valid_cap_simps' capAligned_def)
   apply (rule conjI, fastforce simp: word_bits_def)+
   apply (rule conjI)
-   apply (clarsimp simp: word_le_nat_alt Kernel_C.maxIRQ_def maxIRQ_def)
+   apply (clarsimp simp: word_le_nat_alt Kernel_C.maxIRQ_def maxIRQ_def Kernel_Config.maxIRQ_def)
   apply (clarsimp simp: Collect_const_mem ccap_relation_def cap_irq_handler_cap_lift
                         cap_to_H_def c_valid_cap_def cl_valid_cap_def
                         word_bw_assocs mask_twice Kernel_C.maxIRQ_def ucast_ucast_a
-                        is_up ucast_ucast_b is_down)
+                        is_up ucast_ucast_b is_down irq_len_val)
   apply (subst less_mask_eq)
   apply (rule le_m1_iff_lt[THEN iffD1,THEN iffD1])
   apply simp
@@ -352,10 +348,10 @@ lemma isIRQActive_ccorres:
         (isIRQActive irq) (Call isIRQActive_'proc)"
   apply (cinit lift: irq_')
    apply (simp add: getIRQState_def getInterruptState_def)
-   apply (rule_tac P="irq \<le> ucast Kernel_C.maxIRQ \<and> unat irq < (126::nat)" in ccorres_gen_asm)
+   apply (rule_tac P="irq \<le> ucast Kernel_C.maxIRQ \<and> unat irq < (256::nat)" in ccorres_gen_asm)
    apply (rule ccorres_from_vcg_throws[where P=\<top> and P'=UNIV])
    apply (rule allI, rule conseqPre, vcg)
-   apply (clarsimp simp: simpler_gets_def word_sless_msb_less maxIRQ_def
+   apply (clarsimp simp: simpler_gets_def word_sless_msb_less maxIRQ_def Kernel_Config.maxIRQ_def
                          word_less_nat_alt)
    apply (clarsimp simp: order_le_less_trans unat_less_helper Kernel_C.IRQInactive_def
                          Kernel_C.maxIRQ_def word_0_sle_from_less[OF order_less_le_trans, OF ucast_less])
@@ -368,7 +364,7 @@ lemma isIRQActive_ccorres:
 
 lemma Platform_maxIRQ:
   "maxIRQ = scast Kernel_C.maxIRQ"
-   by (simp add: maxIRQ_def Kernel_C.maxIRQ_def)
+   by (simp add: maxIRQ_def Kernel_C.maxIRQ_def Kernel_Config.maxIRQ_def)
 
 lemma Arch_invokeIRQControl_ccorres:
   "ccorres (K (K \<bottom>) \<currency> dc) (liftxf errstate id (K ()) ret__unsigned_long_')
@@ -394,7 +390,7 @@ lemma Arch_invokeIRQControl_ccorres:
      apply wp
     apply (vcg exspec=invokeIRQControl_modifies)
    apply wpsimp
-  apply (clarsimp simp: Kernel_C.maxIRQ_def maxIRQ_def IRQ_def)
+  apply (clarsimp simp: Kernel_C.maxIRQ_def maxIRQ_def Kernel_Config.maxIRQ_def IRQ_def)
   done
 
 lemma ucast_ucast_mask_le_64_32:
@@ -415,7 +411,7 @@ lemma liftME_invocationCatch:
   done
 
 lemma maxIRQ_ucast_scast [simp]:
-  "ucast (scast Kernel_C.maxIRQ :: 6 word) = scast Kernel_C.maxIRQ"
+  "ucast (scast Kernel_C.maxIRQ :: irq_len word) = scast Kernel_C.maxIRQ"
   by (clarsimp simp: Kernel_C.maxIRQ_def)
 
 lemma decodeIRQ_arch_helper: "x \<noteq> IRQIssueIRQHandler \<Longrightarrow>
@@ -428,6 +424,7 @@ lemma Arch_checkIRQ_ccorres:
    (checkIRQ irq) (Call Arch_checkIRQ_'proc)"
   apply (cinit lift: irq_' )
    apply (simp add: irqInvalid_def Kernel_C.irqInvalid_def Kernel_C.maxIRQ_def maxIRQ_def
+                    Kernel_Config.maxIRQ_def
                del: Collect_const)
    apply (rule ccorres_from_vcg_throws[where P=\<top> and P'=UNIV])
    apply (rule allI, rule conseqPre, vcg)
@@ -443,26 +440,26 @@ lemma checkIRQ_wpE:
 
 lemma maxIRQ_ucast_toEnum_eq:
   "x \<le> ucast maxIRQ \<Longrightarrow> toEnum (unat x) = x" for x::machine_word
-  by (simp add: word_le_nat_alt maxIRQ_def)
+  by (simp add: word_le_nat_alt maxIRQ_def Kernel_Config.maxIRQ_def)
 
 lemma toEnum_unat_irq_t_leq_scast:
   "x \<le> ucast maxIRQ \<Longrightarrow> (toEnum (unat x)::irq) \<le> scast Kernel_C.maxIRQ" for x::machine_word
-  by (simp add: word_le_nat_alt maxIRQ_def Kernel_C.maxIRQ_def ucast_nat_def unat_ucast)
+  by (simp add: word_le_nat_alt maxIRQ_def Kernel_C.maxIRQ_def Kernel_Config.maxIRQ_def ucast_nat_def unat_ucast)
 
 lemma ucast_toEnum_unat_irq_t_leq_ucast:
   "x \<le> ucast maxIRQ \<Longrightarrow> UCAST(_ \<rightarrow> machine_word_len) (toEnum (unat x)::irq) \<le> ucast Kernel_C.maxIRQ"
   for x::machine_word
-  by (simp add: word_le_nat_alt maxIRQ_def Kernel_C.maxIRQ_def ucast_nat_def unat_ucast)
+  by (simp add: word_le_nat_alt maxIRQ_def Kernel_C.maxIRQ_def Kernel_Config.maxIRQ_def ucast_nat_def unat_ucast)
 
 lemma ucast_toEnum_unat_irq_t_leq_scast:
   "x \<le> ucast maxIRQ \<Longrightarrow> UCAST(_ \<rightarrow> machine_word_len) (toEnum (unat x)::irq) \<le> scast Kernel_C.maxIRQ"
   for x::machine_word
-  by (simp add: word_le_nat_alt maxIRQ_def Kernel_C.maxIRQ_def ucast_nat_def unat_ucast)
+  by (simp add: word_le_nat_alt maxIRQ_def Kernel_C.maxIRQ_def Kernel_Config.maxIRQ_def ucast_nat_def unat_ucast)
 
 lemma maxIRQ_irqInvalid:
   "\<lbrakk> x \<le> ucast maxIRQ; x \<noteq> ucast irqInvalid \<rbrakk> \<Longrightarrow> toEnum (unat x) \<noteq> irqInvalid"
   for x :: machine_word
-  apply (simp add: word_le_nat_alt maxIRQ_def irqInvalid_def ucast_nat_def unat_ucast)
+  apply (simp add: word_le_nat_alt maxIRQ_def Kernel_Config.maxIRQ_def irqInvalid_def ucast_nat_def unat_ucast)
   apply (rule notI, erule notE)
   apply unat_arith
   apply (clarsimp simp: unat_ucast_mask)

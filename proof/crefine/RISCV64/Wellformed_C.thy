@@ -323,7 +323,7 @@ cl_valid_cap :: "cap_CL \<Rightarrow> bool"
 where
 "cl_valid_cap c \<equiv>
    case c of
-     Cap_irq_handler_cap fc \<Rightarrow> ((capIRQ_CL fc) && mask 6 = capIRQ_CL fc)
+     Cap_irq_handler_cap fc \<Rightarrow> ((capIRQ_CL fc) && mask irq_len = capIRQ_CL fc)
    | Cap_frame_cap fc \<Rightarrow> capFSize_CL fc < 3 \<and> capFVMRights_CL fc < 4 \<and> capFVMRights_CL fc \<noteq> 0
    | x \<Rightarrow> True"
 
@@ -495,6 +495,13 @@ lemma num_tcb_queues_calculation:
 
 
 text \<open>maxIRQ interface\<close>
+
+(* Main lemma to use when one encounters Kernel_C.maxIRQ.
+   Mirrors AARCH64/ARM_HYP/ARM's Kernel_C_maxIRQ, needed so irq_opt_relation_Some_ucast
+   below can be ported from AARCH64's irqBits-parametric version. *)
+lemma Kernel_C_maxIRQ:
+  "Kernel_C.maxIRQ = Kernel_Config.maxIRQ"
+  by (simp add: Kernel_C.maxIRQ_def Kernel_Config.maxIRQ_def)
 
 declare Kernel_C.maxIRQ_def[code]
 
