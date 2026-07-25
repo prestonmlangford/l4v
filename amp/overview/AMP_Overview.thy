@@ -123,22 +123,39 @@ corollary phase3_recv_ack_headline:
 
 section \<open>Phase 4 — Channel refinement, design level (mirrors Ipc_R)\<close>
 
-(* If channel ch is tagged idle in the design-level map, and a memory write is
-   confined to ch's buffer, then running the design-level send and viewing
-   both the before- and after-states through the abstraction map is exactly a
-   valid Phase 3 abstract send on ch. *)
+(* If the partition is well-formed and ch is one of its declared channels,
+   then after a send on ch using the design-level (word-tagged, deterministic)
+   operation: B1 no other core's private memory changes; B2 every channel's
+   buffer keeps its sender-writes/receiver-reads split; B3 no core holds a
+   writable mapping into another core's private memory. Same guarantee as
+   Phase 3, now established for the operation shape a real implementation
+   actually uses, not just the abstract relation. *)
 corollary phase4_send_R_headline:
-  assumes pre: "xm ch = Some xIdleR" and mem: "changed_frames m m' \<subseteq> ch_buffer ch"
-  shows "xchan_send ch m m' (xchan_map_abs xm) (xchan_map_abs (xchan_send_R ch xm))"
-  using xchan_send_R_corres[where xm = xm and ch = ch, OF pre mem] .
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
+      and pre: "xm ch = Some xIdleR" and mem: "changed_frames m m' \<subseteq> ch_buffer ch"
+  shows "\<forall>c' r'. ap_cores bp c' = Some r' \<longrightarrow> ch_from ch \<noteq> c'
+                 \<longrightarrow> changed_frames m m' \<inter> cr_frames r' = {}"      (* B1 *)
+    and "\<forall>ch' \<in> ap_channels bp. \<forall>f \<in> ch_buffer ch'.
+           frame_perm bp (ch_from ch') f = PermRW
+           \<and> frame_perm bp (ch_to ch') f = PermR"                     (* B2 *)
+    and "\<forall>c' r' f. ap_cores bp c' = Some r' \<longrightarrow> f \<in> cr_frames r' \<longrightarrow> ch_from ch \<noteq> c'
+                   \<longrightarrow> frame_perm bp (ch_from ch) f \<noteq> PermRW"          (* B3 *)
+  using xchan_send_R_preserves_partition[where xm = xm and ch = ch, OF wf ch pre mem] by blast+
 
-(* If channel ch is tagged send-pending in the design-level map, then running
-   the design-level receive-and-acknowledge and viewing both the before- and
-   after-states through the abstraction map is exactly a valid Phase 3
-   abstract receive-and-acknowledge on ch. *)
+(* If the partition is well-formed, then after a receive-and-acknowledge on ch
+   using the design-level operation: B1 no memory changes at all; B2 every
+   channel's buffer keeps its sender-writes/receiver-reads split; B3 no core
+   holds a writable mapping into another core's private memory. Same
+   guarantee as Phase 3, now established at the design level. *)
 corollary phase4_recv_ack_R_headline:
-  assumes pre: "(xm :: xchan_map_R) ch = Some xSendPendingR"
-  shows "xchan_recv_ack ch (xchan_map_abs xm) (xchan_map_abs (xchan_recv_ack_R ch xm))"
-  using xchan_recv_ack_R_corres[where xm = xm and ch = ch, OF pre] .
+  assumes wf: "amp_partition_wf bp" and pre: "(xm :: xchan_map_R) ch = Some xSendPendingR"
+  shows "\<forall>c' r'. ap_cores bp c' = Some r' \<longrightarrow> ch_to ch \<noteq> c'
+                 \<longrightarrow> changed_frames m m \<inter> cr_frames r' = {}"        (* B1, vacuous *)
+    and "\<forall>ch' \<in> ap_channels bp. \<forall>f \<in> ch_buffer ch'.
+           frame_perm bp (ch_from ch') f = PermRW
+           \<and> frame_perm bp (ch_to ch') f = PermR"                     (* B2 *)
+    and "\<forall>c' r' f. ap_cores bp c' = Some r' \<longrightarrow> f \<in> cr_frames r' \<longrightarrow> ch_to ch \<noteq> c'
+                   \<longrightarrow> frame_perm bp (ch_to ch) f \<noteq> PermRW"           (* B3 *)
+  using xchan_recv_ack_R_preserves_partition[where xm = xm and ch = ch, OF wf pre] by blast+
 
 end
