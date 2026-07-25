@@ -1,0 +1,24 @@
+(*
+ * Copyright 2026, PolarFire AMP verification.
+ *
+ * SPDX-License-Identifier: GPL-2.0-only
+ *)
+
+chapter "AMP"
+
+(*
+ * Sessions for the verified asymmetric-multiprocessing (AMP) work.
+ * See ../../multicore-amp-plan.md for the phase plan; each phase adds one or a
+ * few sessions here, each buildable green (no sorry) on its own.
+ *
+ * Fast iteration (see amp/README.md): every AMP session sits on top of an
+ * already-built prerequisite whose heap is cached, so editing a phase's theory
+ * rebuilds only that theory, not its dependencies.
+ *)
+
+(* Phase 1 -- AMP system model (spec only): the multicore composition of
+   per-core abstract states. Builds on the cached ASpec heap. *)
+session AMP_Model in "model" = ASpec +
+  description \<open>Phase 1: AMP system model -- N single-core abstract states plus a static boot partition.\<close>
+  theories
+    "AMP_Model"
