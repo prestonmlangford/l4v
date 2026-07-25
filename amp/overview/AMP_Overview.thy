@@ -90,13 +90,10 @@ corollary phase2_headline:
 
 section \<open>Phase 3 — Channel object + abstract operations (C1-C3)\<close>
 
-(* The cross-core channel gets runtime state -- each declared channel is
-   either idle or holding an unread message -- and two atomic operations that
-   mirror IPC send/receive. C1: a SEND never breaks the spatial partition
-   (B1-B3), because writing a message is, by construction, confined to the
-   channel's own buffer, which is always inside the sender's owned frames --
-   so a send is simply a named special case of the single-core step Phase 2
-   already covers, not a fresh spatial argument. *)
+(* If the partition is well-formed and ch is one of its declared channels,
+   then after a send on ch: B1 no other core's private memory changes; B2
+   every channel's buffer keeps its sender-writes/receiver-reads split; B3 no
+   core holds a writable mapping into another core's private memory. *)
 corollary phase3_send_headline:
   assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
       and send: "xchan_send ch m m' xm xm'"
@@ -109,14 +106,10 @@ corollary phase3_send_headline:
                    \<longrightarrow> frame_perm bp (ch_from ch) f \<noteq> PermRW"          (* B3 *)
   using xchan_send_preserves_partition[OF wf ch send] by blast+
 
-(* C2: a combined RECEIVE-AND-ACKNOWLEDGE step (atomic at this phase; splitting
-   it into two real steps to study the ack race is Phase 6's job) touches no
-   memory at all -- only the channel's status flips back to idle -- so it
-   preserves the partition even more directly than a send does: a step that
-   changes nothing is trivially confined to anyone's owned frames. C3: the
-   buffer's read-write/read-only asymmetry (B2) never moves throughout this
-   whole protocol, because it is a pure function of the STATIC boot partition,
-   which neither operation ever touches. *)
+(* If the partition is well-formed, then after a receive-and-acknowledge on
+   ch: B1 no memory changes at all; B2 every channel's buffer keeps its
+   sender-writes/receiver-reads split; B3 no core holds a writable mapping
+   into another core's private memory. *)
 corollary phase3_recv_ack_headline:
   assumes wf: "amp_partition_wf bp" and rc: "xchan_recv_ack ch xm xm'"
   shows "\<forall>c' r'. ap_cores bp c' = Some r' \<longrightarrow> ch_to ch \<noteq> c'
@@ -130,26 +123,19 @@ corollary phase3_recv_ack_headline:
 
 section \<open>Phase 4 — Channel refinement, design level (mirrors Ipc_R)\<close>
 
-(* Phase 3's channel is specified only ABSTRACTLY -- a status tagged by a
-   two-constructor datatype, changed by a relation. Real kernel state is
-   closer to the design level: status held in a machine word, changed by a
-   deterministic function. Phase 4 adds exactly that design-level state
-   (xchan_map_R) and shows, for both operations, that any design-level step
-   respecting its precondition -- translated back up through the abstraction
-   map xchan_map_abs -- IS a genuine Phase 3 abstract step. This is a
-   REFINEMENT result in the same sense sendIPC_corres/receiveIPC_corres are
-   in the real proof (Ipc_R.thy): once proved, the spatial partition
-   guarantee (B1-B3) established abstractly in Phase 2/3 is inherited at the
-   design level for free, with no new spatial argument. Scope note: this is a
-   small vertical slice, not a full Ipc_R mirror -- the channel moves no
-   capabilities, so it needs none of Ipc_R's capability-transfer machinery.
-   The C level (mirrors Ipc_C) is left to a later, separate session. *)
+(* If channel ch is tagged idle in the design-level map, and a memory write is
+   confined to ch's buffer, then running the design-level send and viewing
+   both the before- and after-states through the abstraction map is exactly a
+   valid Phase 3 abstract send on ch. *)
 corollary phase4_send_R_headline:
   assumes pre: "xm ch = Some xIdleR" and mem: "changed_frames m m' \<subseteq> ch_buffer ch"
   shows "xchan_send ch m m' (xchan_map_abs xm) (xchan_map_abs (xchan_send_R ch xm))"
   using xchan_send_R_corres[where xm = xm and ch = ch, OF pre mem] .
 
-(* The symmetric design-level refinement for recv/ack. *)
+(* If channel ch is tagged send-pending in the design-level map, then running
+   the design-level receive-and-acknowledge and viewing both the before- and
+   after-states through the abstraction map is exactly a valid Phase 3
+   abstract receive-and-acknowledge on ch. *)
 corollary phase4_recv_ack_R_headline:
   assumes pre: "(xm :: xchan_map_R) ch = Some xSendPendingR"
   shows "xchan_recv_ack ch (xchan_map_abs xm) (xchan_map_abs (xchan_recv_ack_R ch xm))"
