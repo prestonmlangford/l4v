@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Check that newly added Isabelle declarations carry a preceding prose comment.
+
+Implements the coding standard in multicore-amp-plan.md section 2: every
+definition and lemma we add must be preceded by a plain-English comment that
+explains it completely.
+
+This only inspects lines ADDED relative to a base ref, so untouched upstream
+seL4 declarations are never flagged. It is a review aid, not a judge of comment
+quality -- it can tell that a comment exists, not that it is complete.
+
+Usage: check-comments.py <base-ref> [repo-dir]
+Exit:  0 = every added declaration is commented, 1 = some are not.
+"""
+
+import re
+import subprocess
+import sys
+
+# Isabelle declaration forms that the standard requires a comment on.
+DECL = re.compile(
+    r"^\s*(definition|lemma|theorem|corollary|abbreviation|primrec|fun|"
+    r"function|record|datatype|inductive|inductive_set|type_synonym|"
+    r"locale|instantiation|schematic_goal)\b"
+)
+
+HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
+
+
+def added_lines(base, repo):
+    """Map each changed .thy file to the set of line numbers added vs base."""
+    out = subprocess.run(
+        ["git", "-C", repo, "diff", "--unified=0", "--no-color", base, "--", "*.thy"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    files, cur, lineno = {}, None, 0
+    for line in out.splitlines():
+        if line.startswith("+++ b/"):
+            cur = line[6:]
+            files.setdefault(cur, set())
+        elif line.startswith("@@"):
+            m = HUNK.match(line)
+            if m:
+                lineno = int(m.group(1))
+        elif line.startswith("+") and not line.startswith("+++") and cur:
+            files[cur].add(lineno)
+            lineno += 1
+    return files
+
+
+def is_commented(lines, idx):
+    """True if the declaration at 0-based idx has a comment block above it.
+
+    Walks back over blank lines, then requires the nearest non-blank line to
+    close an Isabelle comment. Also accepts Isabelle's text/section markup.
+    """
+    i = idx - 1
+    while i >= 0 and not lines[i].strip():
+        i -= 1
+    if i < 0:
+        return False
+    prev = lines[i].strip()
+    return prev.endswith("*)") or prev.startswith(("text", "section", "subsection"))
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    base = sys.argv[1]
+    repo = sys.argv[2] if len(sys.argv) > 2 else "."
+
+    findings = []
+    for path, added in sorted(added_lines(base, repo).items()):
+        if not added:
+            continue
+        try:
+            with open(f"{repo}/{path}", encoding="utf-8", errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except FileNotFoundError:
+            continue  # deleted in the working tree
+        for n in sorted(added):
+            if n > len(lines):
+                continue
+            text = lines[n - 1]
+            if DECL.match(text) and not is_commented(lines, n - 1):
+                findings.append((path, n, text.strip()[:70]))
+
+    if not findings:
+        print("  OK: every added declaration has a preceding comment")
+        return 0
+
+    print(f"  {len(findings)} added declaration(s) with no preceding comment:\n")
+    for path, n, text in findings:
+        print(f"    {path}:{n}")
+        print(f"      {text}")
+    print("\n  Coding standard (plan section 2): each must be preceded by prose")
+    print("  giving its meaning, its assumptions, and the phase/obligation it serves.")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
