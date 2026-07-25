@@ -16,8 +16,11 @@
  * it cannot silently drift out of sync with a later change to the real proof.
  *
  * What this does NOT guarantee: completeness (a phase may prove other true
- * facts not surfaced here -- that is a scoping choice, not a gap), and it
- * cannot check that the English paragraph captures what YOU actually care
+ * facts not surfaced here -- that is a scoping choice, not a gap; in
+ * particular a phase whose only result is an intermediate refinement or
+ * consistency fact, with no real-world corollary reachable from it, earns
+ * NO entry at all -- see Phase 4's C half, deliberately absent below), and
+ * it cannot check that the English paragraph captures what YOU actually care
  * about -- that translation from formal statement to real-world intent is an
  * unavoidably human judgment. The paragraph sits directly next to the formal
  * statement precisely so that judgment is easy to make.
@@ -158,36 +161,22 @@ corollary phase4_recv_ack_R_headline:
                    \<longrightarrow> frame_perm bp (ch_to ch) f \<noteq> PermRW"           (* B3 *)
   using xchan_recv_ack_R_preserves_partition[where xm = xm and ch = ch, OF wf pre] by blast+
 
-section \<open>Phase 4 (C half) — Channel refinement, C level (mirrors Ipc_C)\<close>
-
-context xchan begin
-
-(* Two minimal, hand-written C functions (amp/channel_c/xchan.c) implement
-   the channel's status-word transition. Running the C send on a validly
-   allocated status word always leaves it representing send-pending -- the
-   exact tag the design-level xchan_send_R writes -- regardless of the
-   word's value beforehand; running the C recv/ack always leaves it
-   representing idle. This is the last link in the send/ack chain: what
-   actually runs on hardware matches, tag for tag, the design-level protocol
-   that Phase 4's R half already showed preserves the spatial partition
-   (B1-B3). Buffer CONTENTS remain unmodelled at this level too, as at every
-   earlier phase -- this is about the status protocol only, not byte-level
-   message transfer. *)
-corollary phase4_send_C_headline:
-  "\<lbrace>\<lambda>s. is_valid_w32 s p\<rbrace>
-     xchan_send_c' p
-   \<lbrace>\<lambda>_ s. xchan_c_represents (heap_w32 s p) xSendPendingR\<rbrace>!"
-  using xchan_send_c_refines_R .
-
-(* Symmetric headline for recv/ack: the C recv/ack always leaves the status
-   word representing idle, exactly the tag the design-level
-   xchan_recv_ack_R writes. *)
-corollary phase4_recv_ack_C_headline:
-  "\<lbrace>\<lambda>s. is_valid_w32 s p\<rbrace>
-     xchan_recv_ack_c' p
-   \<lbrace>\<lambda>_ s. xchan_c_represents (heap_w32 s p) xIdleR\<rbrace>!"
-  using xchan_recv_ack_c_refines_R .
-
-end
+(* Phase 4's C half (amp/channel_c/xchan.c, session AMP_Channel_C,
+   xchan_send_c_refines_R / xchan_recv_ack_c_refines_R) is intentionally
+   NOT restated here. Those are refinement/mechanism facts -- "the C write
+   matches the R-level tag" -- the same category xchan_send_R_corres was at
+   the R half above, which this file also does not cite directly (see
+   phase4_send_R_headline's comment and plan.md section 2.5, "Pick the
+   corollary, not the proof step"). Unlike the R half there is no
+   downstream corollary to chain to either: the standalone AutoCorres model
+   xchan_send_c_refines_R is proved against has no notion of frames or
+   memory permissions at all, so no real-world (confidentiality/integrity/
+   availability) consequence is reachable from it by construction -- and
+   this C isn't even spliced into the real kernel_all.c yet, so it doesn't
+   describe what runs on hardware either. It is a genuine, checked result
+   (session AMP_Channel_C is green), just not one with real-world relevance
+   on its own; it earns an entry here only once/if it is bridged into an
+   actual kernel translation unit and something real-world-relevant is
+   proved about that. *)
 
 end
