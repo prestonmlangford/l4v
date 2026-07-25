@@ -28,7 +28,7 @@
  *)
 
 theory AMP_Overview
-imports "AMP_Channel_A.AMP_Channel_A"   (* pulls in AMP_Spatial, AMP_Model transitively *)
+imports "AMP_Channel_R.AMP_Channel_R"   (* pulls in AMP_Channel_A, AMP_Spatial, AMP_Model transitively *)
 begin
 
 section \<open>Phase 1 — AMP system model\<close>
@@ -127,5 +127,32 @@ corollary phase3_recv_ack_headline:
     and "\<forall>c' r' f. ap_cores bp c' = Some r' \<longrightarrow> f \<in> cr_frames r' \<longrightarrow> ch_to ch \<noteq> c'
                    \<longrightarrow> frame_perm bp (ch_to ch) f \<noteq> PermRW"           (* B3 *)
   using xchan_recv_ack_preserves_partition[OF wf rc] by blast+
+
+section \<open>Phase 4 — Channel refinement, design level (mirrors Ipc_R)\<close>
+
+(* Phase 3's channel is specified only ABSTRACTLY -- a status tagged by a
+   two-constructor datatype, changed by a relation. Real kernel state is
+   closer to the design level: status held in a machine word, changed by a
+   deterministic function. Phase 4 adds exactly that design-level state
+   (xchan_map_R) and shows, for both operations, that any design-level step
+   respecting its precondition -- translated back up through the abstraction
+   map xchan_map_abs -- IS a genuine Phase 3 abstract step. This is a
+   REFINEMENT result in the same sense sendIPC_corres/receiveIPC_corres are
+   in the real proof (Ipc_R.thy): once proved, the spatial partition
+   guarantee (B1-B3) established abstractly in Phase 2/3 is inherited at the
+   design level for free, with no new spatial argument. Scope note: this is a
+   small vertical slice, not a full Ipc_R mirror -- the channel moves no
+   capabilities, so it needs none of Ipc_R's capability-transfer machinery.
+   The C level (mirrors Ipc_C) is left to a later, separate session. *)
+corollary phase4_send_R_headline:
+  assumes pre: "xm ch = Some xIdleR" and mem: "changed_frames m m' \<subseteq> ch_buffer ch"
+  shows "xchan_send ch m m' (xchan_map_abs xm) (xchan_map_abs (xchan_send_R ch xm))"
+  using xchan_send_R_corres[where xm = xm and ch = ch, OF pre mem] .
+
+(* The symmetric design-level refinement for recv/ack. *)
+corollary phase4_recv_ack_R_headline:
+  assumes pre: "(xm :: xchan_map_R) ch = Some xSendPendingR"
+  shows "xchan_recv_ack ch (xchan_map_abs xm) (xchan_map_abs (xchan_recv_ack_R ch xm))"
+  using xchan_recv_ack_R_corres[where xm = xm and ch = ch, OF pre] .
 
 end

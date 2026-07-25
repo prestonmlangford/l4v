@@ -68,11 +68,42 @@ def added_lines(base, repo):
     return files
 
 
+def in_comment_mask(lines):
+    """Per-line bool: True if that line is inside an Isabelle (* ... *) block.
+
+    A line that OPENS a comment and doesn't close it on the same line counts
+    as inside (it's comment text, even though the "(*" token itself isn't).
+    Nesting depth is tracked so nested comments don't close early. This is a
+    plain textual scan -- it doesn't understand Isabelle strings, so a "(*"
+    or "*)" inside a quoted string could in principle confuse it, but that
+    pattern doesn't occur in this project's theories.
+    """
+    mask = []
+    depth = 0
+    for line in lines:
+        starts_inside = depth > 0
+        i = 0
+        while i < len(line):
+            if line[i:i + 2] == "(*":
+                depth += 1
+                i += 2
+            elif line[i:i + 2] == "*)":
+                depth = max(0, depth - 1)
+                i += 2
+            else:
+                i += 1
+        mask.append(starts_inside or depth > 0)
+    return mask
+
+
 def is_commented(lines, idx):
     """True if the declaration at 0-based idx has a comment block above it.
 
     Walks back over blank lines, then requires the nearest non-blank line to
     close an Isabelle comment. Also accepts Isabelle's text/section markup.
+    Callers must first check in_comment_mask(lines)[idx] and skip this
+    entirely if it's set -- a wrapped comment line that happens to start with
+    a keyword like "function" or "theorem" is prose, not a declaration.
     """
     i = idx - 1
     while i >= 0 and not lines[i].strip():
@@ -98,10 +129,13 @@ def main():
                 lines = fh.read().splitlines()
         except FileNotFoundError:
             continue  # deleted in the working tree
+        mask = in_comment_mask(lines)
         for n in sorted(added):
             if n > len(lines):
                 continue
             text = lines[n - 1]
+            if mask[n - 1]:
+                continue  # this "declaration-looking" line is prose inside a comment
             if DECL.match(text) and not is_commented(lines, n - 1):
                 findings.append((path, n, text.strip()[:70]))
 
