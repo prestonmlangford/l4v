@@ -28,7 +28,7 @@
  *)
 
 theory AMP_Overview
-imports "AMP_Spatial.AMP_Spatial"   (* pulls in AMP_Model transitively *)
+imports "AMP_Channel_A.AMP_Channel_A"   (* pulls in AMP_Spatial, AMP_Model transitively *)
 begin
 
 section \<open>Phase 1 — AMP system model\<close>
@@ -87,5 +87,45 @@ corollary phase2_headline:
     and "\<forall>c' r' f. ap_cores bp c' = Some r' \<longrightarrow> f \<in> cr_frames r' \<longrightarrow> c \<noteq> c'
                    \<longrightarrow> frame_perm bp c f \<noteq> PermRW"                   (* B3 *)
   using amp_step_preserves_partition[OF wf step] by blast+
+
+section \<open>Phase 3 — Channel object + abstract operations (C1-C3)\<close>
+
+(* The cross-core channel gets runtime state -- each declared channel is
+   either idle or holding an unread message -- and two atomic operations that
+   mirror IPC send/receive. C1: a SEND never breaks the spatial partition
+   (B1-B3), because writing a message is, by construction, confined to the
+   channel's own buffer, which is always inside the sender's owned frames --
+   so a send is simply a named special case of the single-core step Phase 2
+   already covers, not a fresh spatial argument. *)
+corollary phase3_send_headline:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
+      and send: "xchan_send ch m m' xm xm'"
+  shows "\<forall>c' r'. ap_cores bp c' = Some r' \<longrightarrow> ch_from ch \<noteq> c'
+                 \<longrightarrow> changed_frames m m' \<inter> cr_frames r' = {}"      (* B1 *)
+    and "\<forall>ch' \<in> ap_channels bp. \<forall>f \<in> ch_buffer ch'.
+           frame_perm bp (ch_from ch') f = PermRW
+           \<and> frame_perm bp (ch_to ch') f = PermR"                     (* B2 *)
+    and "\<forall>c' r' f. ap_cores bp c' = Some r' \<longrightarrow> f \<in> cr_frames r' \<longrightarrow> ch_from ch \<noteq> c'
+                   \<longrightarrow> frame_perm bp (ch_from ch) f \<noteq> PermRW"          (* B3 *)
+  using xchan_send_preserves_partition[OF wf ch send] by blast+
+
+(* C2: a combined RECEIVE-AND-ACKNOWLEDGE step (atomic at this phase; splitting
+   it into two real steps to study the ack race is Phase 6's job) touches no
+   memory at all -- only the channel's status flips back to idle -- so it
+   preserves the partition even more directly than a send does: a step that
+   changes nothing is trivially confined to anyone's owned frames. C3: the
+   buffer's read-write/read-only asymmetry (B2) never moves throughout this
+   whole protocol, because it is a pure function of the STATIC boot partition,
+   which neither operation ever touches. *)
+corollary phase3_recv_ack_headline:
+  assumes wf: "amp_partition_wf bp" and rc: "xchan_recv_ack ch xm xm'"
+  shows "\<forall>c' r'. ap_cores bp c' = Some r' \<longrightarrow> ch_to ch \<noteq> c'
+                 \<longrightarrow> changed_frames m m \<inter> cr_frames r' = {}"        (* B1, vacuous *)
+    and "\<forall>ch' \<in> ap_channels bp. \<forall>f \<in> ch_buffer ch'.
+           frame_perm bp (ch_from ch') f = PermRW
+           \<and> frame_perm bp (ch_to ch') f = PermR"                     (* B2/C3 *)
+    and "\<forall>c' r' f. ap_cores bp c' = Some r' \<longrightarrow> f \<in> cr_frames r' \<longrightarrow> ch_to ch \<noteq> c'
+                   \<longrightarrow> frame_perm bp (ch_to ch) f \<noteq> PermRW"           (* B3 *)
+  using xchan_recv_ack_preserves_partition[OF wf rc] by blast+
 
 end
