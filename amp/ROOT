@@ -30,14 +30,23 @@ session AMP_Spatial in "spatial" = AMP_Model +
   theories
     "AMP_Spatial"
 
+(* Phase 3 -- channel object + abstract operations (C1-C3): xchan_send and
+   xchan_recv_ack, specified as atomic abstract steps mirroring IPC endpoints,
+   shown to preserve the Phase 2 spatial partition invariant. Builds on the
+   cached AMP_Spatial heap. *)
+session AMP_Channel_A in "channel" = AMP_Spatial +
+  description \<open>Phase 3: cross-core channel object -- xchan_send/xchan_recv_ack preserve the spatial partition invariant.\<close>
+  theories
+    "AMP_Channel_A"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read
    this file, not any phase's own theory, if you only want to know WHAT has
    been proved. Updated once per phase (plan section 2.5). Builds on the
-   cached AMP_Spatial heap (the latest phase), which imports all earlier
+   cached AMP_Channel_A heap (the latest phase), which imports all earlier
    phases transitively. *)
-session AMP_Overview in "overview" = AMP_Spatial +
+session AMP_Overview in "overview" = AMP_Channel_A +
   description \<open>Cumulative specification index: every phase's headline theorem, restated next to its plain-English meaning and re-derived from the real proof.\<close>
   theories
     "AMP_Overview"
