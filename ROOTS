@@ -3,6 +3,7 @@
 #
 spec
 proof
+amp
 tools
 camkes
 sys-init
