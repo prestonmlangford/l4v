@@ -51,14 +51,27 @@ session AMP_Channel_R in "channel_r" = AMP_Channel_A +
   theories
     "AMP_Channel_R"
 
+(* Phase 4 (C half) -- channel refinement, C level: xchan_send_c and
+   xchan_recv_ack_c, two minimal hand-written C functions (amp/channel_c/
+   xchan.c) parsed and lifted via AutoCorres -- not full CRefine/ccorres,
+   since this C exists nowhere in kernel_all.c yet (see the theory header
+   for why) -- shown to correctly implement Phase 4 R half's xchan_send_R /
+   xchan_recv_ack_R. Builds on the cached AMP_Channel_R heap plus the
+   AutoCorres session. *)
+session AMP_Channel_C in "channel_c" = AMP_Channel_R +
+  sessions
+    AutoCorres
+  theories
+    "AMP_Channel_C"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read
    this file, not any phase's own theory, if you only want to know WHAT has
    been proved. Updated once per phase (plan section 2.5). Builds on the
-   cached AMP_Channel_R heap (the latest phase), which imports all earlier
+   cached AMP_Channel_C heap (the latest phase), which imports all earlier
    phases transitively. *)
-session AMP_Overview in "overview" = AMP_Channel_R +
+session AMP_Overview in "overview" = AMP_Channel_C +
   description \<open>Cumulative specification index: every phase's headline theorem, restated next to its plain-English meaning and re-derived from the real proof.\<close>
   theories
     "AMP_Overview"

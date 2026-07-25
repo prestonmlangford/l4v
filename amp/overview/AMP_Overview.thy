@@ -28,7 +28,7 @@
  *)
 
 theory AMP_Overview
-imports "AMP_Channel_R.AMP_Channel_R"   (* pulls in AMP_Channel_A, AMP_Spatial, AMP_Model transitively *)
+imports "AMP_Channel_C.AMP_Channel_C"   (* pulls in AMP_Channel_R, AMP_Channel_A, AMP_Spatial, AMP_Model transitively *)
 begin
 
 section \<open>Phase 1 — AMP system model\<close>
@@ -157,5 +157,37 @@ corollary phase4_recv_ack_R_headline:
     and "\<forall>c' r' f. ap_cores bp c' = Some r' \<longrightarrow> f \<in> cr_frames r' \<longrightarrow> ch_to ch \<noteq> c'
                    \<longrightarrow> frame_perm bp (ch_to ch) f \<noteq> PermRW"           (* B3 *)
   using xchan_recv_ack_R_preserves_partition[where xm = xm and ch = ch, OF wf pre] by blast+
+
+section \<open>Phase 4 (C half) — Channel refinement, C level (mirrors Ipc_C)\<close>
+
+context xchan begin
+
+(* Two minimal, hand-written C functions (amp/channel_c/xchan.c) implement
+   the channel's status-word transition. Running the C send on a validly
+   allocated status word always leaves it representing send-pending -- the
+   exact tag the design-level xchan_send_R writes -- regardless of the
+   word's value beforehand; running the C recv/ack always leaves it
+   representing idle. This is the last link in the send/ack chain: what
+   actually runs on hardware matches, tag for tag, the design-level protocol
+   that Phase 4's R half already showed preserves the spatial partition
+   (B1-B3). Buffer CONTENTS remain unmodelled at this level too, as at every
+   earlier phase -- this is about the status protocol only, not byte-level
+   message transfer. *)
+corollary phase4_send_C_headline:
+  "\<lbrace>\<lambda>s. is_valid_w32 s p\<rbrace>
+     xchan_send_c' p
+   \<lbrace>\<lambda>_ s. xchan_c_represents (heap_w32 s p) xSendPendingR\<rbrace>!"
+  using xchan_send_c_refines_R .
+
+(* Symmetric headline for recv/ack: the C recv/ack always leaves the status
+   word representing idle, exactly the tag the design-level
+   xchan_recv_ack_R writes. *)
+corollary phase4_recv_ack_C_headline:
+  "\<lbrace>\<lambda>s. is_valid_w32 s p\<rbrace>
+     xchan_recv_ack_c' p
+   \<lbrace>\<lambda>_ s. xchan_c_represents (heap_w32 s p) xIdleR\<rbrace>!"
+  using xchan_recv_ack_c_refines_R .
+
+end
 
 end
