@@ -30,7 +30,12 @@ bad() { printf '  FAIL: %s\n' "$1"; fail=1; }
 ok()  { printf '  OK: %s\n' "$1"; }
 
 echo "[1] No cheats in changed theories (vs $BASE)"
-changed=$(git diff --name-only --diff-filter=d "$BASE" -- '*.thy' || true)
+# Untracked new .thy files are invisible to `git diff` (it only sees tracked
+# paths), so a brand-new file could otherwise silently skip both checks below
+# unless the caller happened to `git add` it first. Union in untracked files
+# explicitly so that can't happen.
+changed=$( (git diff --name-only --diff-filter=d "$BASE" -- '*.thy'
+            git ls-files --others --exclude-standard -- '*.thy') | sort -u || true)
 if [ -z "$changed" ]; then
   ok "no changed .thy files"
 else
