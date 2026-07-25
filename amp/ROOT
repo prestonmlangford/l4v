@@ -22,3 +22,10 @@ session AMP_Model in "model" = ASpec +
   description \<open>Phase 1: AMP system model -- N single-core abstract states plus a static boot partition.\<close>
   theories
     "AMP_Model"
+
+(* Phase 2 -- spatial partition invariant (B1-B3): each per-core kernel step
+   preserves the partition. Builds on the cached AMP_Model heap. *)
+session AMP_Spatial in "spatial" = AMP_Model +
+  description \<open>Phase 2: spatial isolation -- a core's step touches only its owned frames; the writer/reader buffer mapping is asymmetric.\<close>
+  theories
+    "AMP_Spatial"
