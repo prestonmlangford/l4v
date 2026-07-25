@@ -31,7 +31,9 @@
  *)
 
 theory AMP_Overview
-imports "AMP_Channel_C.AMP_Channel_C"   (* pulls in AMP_Channel_R, AMP_Channel_A, AMP_Spatial, AMP_Model transitively *)
+imports
+  "AMP_Channel_C.AMP_Channel_C"    (* pulls in AMP_Channel_R, AMP_Channel_A, AMP_Spatial, AMP_Model transitively *)
+  "AMP_Channel_AC.AMP_Channel_AC"  (* Phase 5, a sibling branch off AMP_Channel_A, not on the R/C refinement chain *)
 begin
 
 section \<open>Phase 1 — AMP system model\<close>
@@ -178,5 +180,48 @@ corollary phase4_recv_ack_R_headline:
    on its own; it earns an entry here only once/if it is bridged into an
    actual kernel translation unit and something real-world-relevant is
    proved about that. *)
+
+section \<open>Phase 5 — Channel access control, D-spatial half of security (mirrors Ipc_AC)\<close>
+
+(* Every declared channel implies exactly two authority edges: its sender may
+   send (XSend) and its receiver may receive (XRecv), read off the boot
+   config's ap_channels -- there is no capability derivation, minting, or
+   transfer anywhere in this model for that authority to drift out of sync
+   with, unlike real seL4's mutable capability space. This graph is shown to
+   match, exactly, what Phase 2's MMU permission map already enforces: a
+   core has write access to a channel's buffer if and only if it holds the
+   declared XSend edge for that channel. The boot config's stated intent and
+   the hardware's actual behaviour are, provably, the same thing. *)
+corollary phase5_write_authority_matches_enforcement:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp" and f: "f \<in> ch_buffer ch"
+  shows "frame_perm bp c f = PermRW \<longleftrightarrow> (c, XSend, ch) \<in> amp_auth_graph bp"
+  using amp_auth_graph_write_iff[OF wf ch f] .
+
+(* Sending on a declared channel is authority-confined: every frame a send
+   changes is one whose write authority belongs exactly to the declared
+   sender's XSend edge -- no core, authorized or not, other than the one the
+   boot config named can ever hold write access there (Phase 2's B3 rules it
+   out physically), so no send's effect is ever attributable to any
+   authority beyond that one declared edge. This is the integrity half: an
+   unauthorized core cannot forge a send. *)
+corollary phase5_send_headline:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
+      and send: "xchan_send ch m m' xm xm'"
+  shows "\<forall>f \<in> changed_frames m m'. \<forall>c. frame_perm bp c f = PermRW
+           \<longrightarrow> (c, XSend, ch) \<in> amp_auth_graph bp"
+  using xchan_send_authority_confined[OF wf ch send] .
+
+(* No core outside a channel's two declared endpoints ever holds any access
+   -- read or write -- to its buffer. In particular the declared receiver's
+   XRecv edge is the only read authority that ever exists over a message a
+   recv_ack consumes: an unauthorized core cannot observe it, because it
+   holds no mapping there at all, regardless of the channel's runtime
+   status. This is the confidentiality half: an unauthorized core cannot
+   read a channel it was not declared to receive on. *)
+corollary phase5_recv_headline:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp" and f: "f \<in> ch_buffer ch"
+      and c: "c \<noteq> ch_to ch"
+  shows "(c, XRecv, ch) \<notin> amp_auth_graph bp"
+  using xchan_recv_ack_authority_confined[OF wf ch f c] .
 
 end

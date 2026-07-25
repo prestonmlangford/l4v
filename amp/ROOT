@@ -64,6 +64,19 @@ session AMP_Channel_C in "channel_c" = AMP_Channel_R +
   theories
     "AMP_Channel_C"
 
+(* Phase 5 -- channel access control (D-spatial half of security): an
+   explicit authority-graph vocabulary (mirrors Access.thy's auth_graph/
+   pas_refined) derived from ap_channels, shown to match exactly what Phase
+   2's MMU permission map (frame_perm) already enforces, and used to state
+   send/recv authority-confinement theorems. Builds on the cached
+   AMP_Channel_A heap -- this is the abstract-op level (mirrors Ipc_AC),
+   independent of the R/C refinement chain, per the plan's "Reuses: Phase 2
+   partition, Phase 3 abstract ops". *)
+session AMP_Channel_AC in "channel_ac" = AMP_Channel_A +
+  description \<open>Phase 5: channel access control -- the declared authority graph matches the enforced MMU permission map; send/recv are authority-confined.\<close>
+  theories
+    "AMP_Channel_AC"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read
@@ -73,5 +86,7 @@ session AMP_Channel_C in "channel_c" = AMP_Channel_R +
    phases transitively. *)
 session AMP_Overview in "overview" = AMP_Channel_C +
   description \<open>Cumulative specification index: every phase's headline theorem, restated next to its plain-English meaning and re-derived from the real proof.\<close>
+  sessions
+    AMP_Channel_AC
   theories
     "AMP_Overview"
