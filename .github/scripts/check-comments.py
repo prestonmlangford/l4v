@@ -28,7 +28,13 @@ HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
 
 
 def added_lines(base, repo):
-    """Map each changed .thy file to the set of line numbers added vs base."""
+    """Map each changed .thy file to the set of line numbers added vs base.
+
+    `git diff` only ever considers tracked paths, so a brand-new file that
+    hasn't been `git add`-ed yet would otherwise be invisible here and skip
+    the check entirely. Untracked .thy files are unioned in separately, with
+    every line treated as added (the whole file is new).
+    """
     out = subprocess.run(
         ["git", "-C", repo, "diff", "--unified=0", "--no-color", base, "--", "*.thy"],
         capture_output=True, text=True, check=True,
@@ -45,6 +51,20 @@ def added_lines(base, repo):
         elif line.startswith("+") and not line.startswith("+++") and cur:
             files[cur].add(lineno)
             lineno += 1
+
+    untracked = subprocess.run(
+        ["git", "-C", repo, "ls-files", "--others", "--exclude-standard", "--", "*.thy"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    for path in untracked.splitlines():
+        if not path:
+            continue
+        try:
+            with open(f"{repo}/{path}", encoding="utf-8", errors="replace") as fh:
+                n_lines = len(fh.read().splitlines())
+        except FileNotFoundError:
+            continue
+        files.setdefault(path, set()).update(range(1, n_lines + 1))
     return files
 
 

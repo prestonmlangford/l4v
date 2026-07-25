@@ -29,3 +29,15 @@ session AMP_Spatial in "spatial" = AMP_Model +
   description \<open>Phase 2: spatial isolation -- a core's step touches only its owned frames; the writer/reader buffer mapping is asymmetric.\<close>
   theories
     "AMP_Spatial"
+
+(* Overview -- cumulative, machine-checked index of every phase's headline
+   result: a plain-English paragraph directly beside the exact formal
+   statement, re-derived from the real theorem so drift breaks the build. Read
+   this file, not any phase's own theory, if you only want to know WHAT has
+   been proved. Updated once per phase (plan section 2.5). Builds on the
+   cached AMP_Spatial heap (the latest phase), which imports all earlier
+   phases transitively. *)
+session AMP_Overview in "overview" = AMP_Spatial +
+  description \<open>Cumulative specification index: every phase's headline theorem, restated next to its plain-English meaning and re-derived from the real proof.\<close>
+  theories
+    "AMP_Overview"

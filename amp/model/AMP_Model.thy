@@ -24,7 +24,18 @@ theory AMP_Model
 imports "ASpec.Syscall_A"
 begin
 
-section \<open>Core identifiers and per-core resources\<close>
+(* This theory is organized in four zones, in this order: SPECIFICATION (types,
+   records, and the operations/predicates that give the AMP model its
+   vocabulary — read this to know WHAT is being modelled), PROOF DEVELOPMENT
+   (internal destructor lemmas that exist only to make the results below
+   provable — skip this if you only want to know what holds), RESULTS (the
+   phase's headline theorem), and EXAMPLES (a concrete non-vacuity witness).
+   See ../../multicore-amp-plan.md section 2.5 and amp/overview/AMP_Overview.thy
+   for the cumulative cross-phase version of this same idea. *)
+
+section \<open>Specification\<close>
+
+subsection \<open>Core identifiers and per-core resources\<close>
 
 (* A core is named by a natural number. PolarFire has four U54 application
    cores, but nothing in the model fixes the count; core_id is left as nat so
@@ -44,7 +55,7 @@ record core_resources =
   cr_frames :: "obj_ref set"
   cr_irqs   :: "irq set"
 
-section \<open>Declared cross-core channels\<close>
+subsection \<open>Declared cross-core channels\<close>
 
 (* A declared one-way communication channel between two distinct cores. ch_from
    is the sender, ch_to the receiver, and ch_buffer is the set of physical
@@ -63,7 +74,7 @@ record amp_channel =
 definition channel_endpoints :: "amp_channel \<Rightarrow> core_id set" where
   "channel_endpoints ch = {ch_from ch, ch_to ch}"
 
-section \<open>The static boot partition\<close>
+subsection \<open>The static boot partition\<close>
 
 (* The static, boot-time assignment of resources to cores. ap_cores is a partial
    map from core_id to that core's private resources; its DOMAIN is exactly the
@@ -75,7 +86,7 @@ record amp_partition =
   ap_cores    :: "core_id \<rightharpoonup> core_resources"
   ap_channels :: "amp_channel set"
 
-section \<open>The multicore system state\<close>
+subsection \<open>The multicore system state\<close>
 
 (* The whole AMP system: one single-core abstract_state per present core, plus
    the static partition. amp_cores has the SAME domain as ap_cores of amp_boot —
@@ -87,7 +98,7 @@ record amp_state =
   amp_cores :: "core_id \<rightharpoonup> abstract_state"
   amp_boot  :: amp_partition
 
-section \<open>Well-formedness of the partition\<close>
+subsection \<open>Well-formedness of the partition\<close>
 
 (* The core invariant SHAPE of the whole AMP effort, stated over the static
    partition. A partition is well-formed when all four hold:
@@ -113,6 +124,20 @@ definition amp_partition_wf :: "amp_partition \<Rightarrow> bool" where
      (\<forall>ch1 \<in> ap_channels ap. \<forall>ch2 \<in> ap_channels ap. ch1 \<noteq> ch2
                     \<longrightarrow> ch_buffer ch1 \<inter> ch_buffer ch2 = {})"
 
+subsection \<open>Owned frames\<close>
+
+(* The full set of frames a core may reach: its private frames, plus the buffers
+   of every declared channel it is an endpoint of. This is the footprint whose
+   pairwise overlap the next theorem bounds, and the quantity Phase 2 shows is
+   preserved by kernel steps. A core with no entry in the partition owns
+   nothing. *)
+definition owned_frames :: "amp_partition \<Rightarrow> core_id \<Rightarrow> obj_ref set" where
+  "owned_frames ap c =
+     (case ap_cores ap c of None \<Rightarrow> {} | Some r \<Rightarrow> cr_frames r)
+     \<union> (\<Union>{ch_buffer ch | ch. ch \<in> ap_channels ap \<and> c \<in> channel_endpoints ch})"
+
+section \<open>Proof development (internal machinery)\<close>
+
 (* Destructor: the private-frame disjointness conjunct, in usable form. Phase 2's
    B1/B3 obligations reach for exactly this fact when arguing a core's step
    cannot touch another core's private memory. *)
@@ -129,17 +154,7 @@ lemma amp_partition_wf_buffer_not_private:
    \<Longrightarrow> ch_buffer ch \<inter> cr_frames r = {}"
   by (simp add: amp_partition_wf_def)
 
-section \<open>Owned frames and the overlap characterisation\<close>
-
-(* The full set of frames a core may reach: its private frames, plus the buffers
-   of every declared channel it is an endpoint of. This is the footprint whose
-   pairwise overlap the next theorem bounds, and the quantity Phase 2 shows is
-   preserved by kernel steps. A core with no entry in the partition owns
-   nothing. *)
-definition owned_frames :: "amp_partition \<Rightarrow> core_id \<Rightarrow> obj_ref set" where
-  "owned_frames ap c =
-     (case ap_cores ap c of None \<Rightarrow> {} | Some r \<Rightarrow> cr_frames r)
-     \<union> (\<Union>{ch_buffer ch | ch. ch \<in> ap_channels ap \<and> c \<in> channel_endpoints ch})"
+section \<open>Results\<close>
 
 (* The payoff of well-formedness: for two DISTINCT cores, the only frames they
    can both reach are declared channel buffers. Every other cross term is empty
@@ -167,7 +182,9 @@ proof -
     by (fastforce simp: owned_frames_def channel_endpoints_def split: option.splits)
 qed
 
-section \<open>Example: a well-formed two-core configuration\<close>
+section \<open>Examples\<close>
+
+subsection \<open>A well-formed two-core configuration\<close>
 
 (* Private resources for the two example cores. Frames use arbitrary but
    distinct, page-separated witness addresses; the concrete numbers matter only

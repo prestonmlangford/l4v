@@ -28,52 +28,24 @@
  * hang). Every proof below instead goes through the bounded per-conjunct
  * destructor lemmas in the first section, and never unfolds the definition into
  * a non-trivial goal.
+ *
+ * This theory is organized in four zones, in this order: SPECIFICATION (the
+ * types and operations that give the spatial argument its vocabulary — read
+ * this to know WHAT is being modelled), PROOF DEVELOPMENT (internal destructor
+ * lemmas and branch facts that exist only to make the results below provable —
+ * skip this if you only want to know what holds), RESULTS (B1/B2/B3 and the
+ * packaged exit theorem), and EXAMPLES (concrete non-vacuity witnesses). See
+ * ../../multicore-amp-plan.md section 2.5 and amp/overview/AMP_Overview.thy for
+ * the cumulative cross-phase version of this same idea.
  *)
 
 theory AMP_Spatial
 imports "AMP_Model.AMP_Model"
 begin
 
-section \<open>Well-formedness destructors (bounded projections)\<close>
+section \<open>Specification\<close>
 
-(* Channels connect distinct cores. Projection of amp_partition_wf conjunct 2.
-   The conjunct is first pulled out by simp (conjunction-elimination only, no
-   search), THEN instantiated by blast on that single small fact — crucially the
-   full definition, with its set-equality conjuncts, is never handed to blast. *)
-lemma wf_channel_distinct:
-  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
-  shows "ch_from ch \<noteq> ch_to ch"
-proof -
-  from wf have "\<forall>ch \<in> ap_channels bp. ch_from ch \<noteq> ch_to ch
-                  \<and> ch_from ch \<in> dom (ap_cores bp) \<and> ch_to ch \<in> dom (ap_cores bp)"
-    by (simp add: amp_partition_wf_def)
-  with ch show ?thesis by blast
-qed
-
-(* Distinct channels have disjoint buffers. Projection of conjunct 4, extracted
-   the same way — simp projects the conjunct, blast instantiates it. *)
-lemma wf_buffers_disjoint:
-  assumes wf: "amp_partition_wf bp"
-      and c1: "ch1 \<in> ap_channels bp" and c2: "ch2 \<in> ap_channels bp" and ne: "ch1 \<noteq> ch2"
-  shows "ch_buffer ch1 \<inter> ch_buffer ch2 = {}"
-proof -
-  from wf have "\<forall>ch1 \<in> ap_channels bp. \<forall>ch2 \<in> ap_channels bp.
-                  ch1 \<noteq> ch2 \<longrightarrow> ch_buffer ch1 \<inter> ch_buffer ch2 = {}"
-    by (simp add: amp_partition_wf_def)
-  with c1 c2 ne show ?thesis by blast
-qed
-
-(* A frame lies in at most one channel's buffer: any channel whose buffer holds f
-   equals any other such channel. Immediate from buffer disjointness — this is the
-   form the permission proofs actually use. *)
-lemma wf_buffer_unique:
-  assumes wf: "amp_partition_wf bp"
-      and c1: "ch1 \<in> ap_channels bp" and c2: "ch2 \<in> ap_channels bp"
-      and f1: "f \<in> ch_buffer ch1" and f2: "f \<in> ch_buffer ch2"
-  shows "ch1 = ch2"
-  using wf_buffers_disjoint[OF wf c1 c2] f1 f2 by blast
-
-section \<open>Access permissions on frames\<close>
+subsection \<open>Access permissions on frames\<close>
 
 (* The permission a core may hold on a physical frame. Three levels suffice for
    the spatial argument: no access at all, read-only (the receiver's view of a
@@ -83,7 +55,7 @@ section \<open>Access permissions on frames\<close>
    at this altitude. *)
 datatype access_perm = PermNone | PermR | PermRW
 
-section \<open>Frames changed by a step, and the integrity abstraction\<close>
+subsection \<open>Frames changed by a step, and the integrity abstraction\<close>
 
 (* The set of frames whose contents differ between two system memories. A "system
    memory" is modelled abstractly as a function from a frame (obj_ref) to its
@@ -105,51 +77,7 @@ definition amp_step ::
   "core_id \<Rightarrow> (obj_ref \<Rightarrow> 'v) \<Rightarrow> (obj_ref \<Rightarrow> 'v) \<Rightarrow> amp_partition \<Rightarrow> bool" where
   "amp_step c m m' bp \<equiv> changed_frames m m' \<subseteq> owned_frames bp c"
 
-section \<open>B1 — a step never touches another core's private memory\<close>
-
-(* Helper: under a well-formed partition, one core's whole footprint is disjoint
-   from any OTHER core's private frames. owned_frames c meets owned_frames c'
-   only in channel buffers (owned_overlap_subset_channels), and a channel buffer
-   never intersects any core's private frames (amp_partition_wf_buffer_not_private),
-   so the meet with c''s private frames specifically is empty. This is the spatial
-   core of the whole phase; B1 and B3 both fall out of it. *)
-lemma owned_disjoint_other_private:
-  assumes wf:  "amp_partition_wf bp"
-      and c':  "ap_cores bp c' = Some r'"
-      and neq: "c \<noteq> c'"
-  shows "owned_frames bp c \<inter> cr_frames r' = {}"
-proof -
-  have sub: "cr_frames r' \<subseteq> owned_frames bp c'"
-    using c' by (auto simp: owned_frames_def)
-  have "owned_frames bp c \<inter> cr_frames r' \<subseteq> owned_frames bp c \<inter> owned_frames bp c'"
-    using sub by blast
-  also have "\<dots> \<subseteq> (\<Union>ch \<in> ap_channels bp. ch_buffer ch)"
-    using owned_overlap_subset_channels[OF wf neq] .
-  finally have in_bufs: "owned_frames bp c \<inter> cr_frames r'
-                           \<subseteq> (\<Union>ch \<in> ap_channels bp. ch_buffer ch)" .
-  (* no channel buffer meets c''s private frames (conjunct-3 destructor) *)
-  have "(\<Union>ch \<in> ap_channels bp. ch_buffer ch) \<inter> cr_frames r' = {}"
-    using amp_partition_wf_buffer_not_private[OF wf _ c'] by blast
-  with in_bufs show ?thesis by blast
-qed
-
-(* B1: a single-core step by c changes none of any other core c''s private
-   frames. Immediate from confinement (changed frames \<subseteq> owned c) and the helper
-   above. This is the "a core can only touch memory it owns" guarantee, reduced
-   to seL4's integrity via amp_step. *)
-theorem amp_step_preserves_other_private:
-  assumes wf:   "amp_partition_wf bp"
-      and step: "amp_step c m m' bp"
-      and c':   "ap_cores bp c' = Some r'"
-      and neq:  "c \<noteq> c'"
-  shows "changed_frames m m' \<inter> cr_frames r' = {}"
-proof -
-  have "changed_frames m m' \<inter> cr_frames r' \<subseteq> owned_frames bp c \<inter> cr_frames r'"
-    using step by (auto simp: amp_step_def)
-  with owned_disjoint_other_private[OF wf c' neq] show ?thesis by blast
-qed
-
-section \<open>The intended permission map\<close>
+subsection \<open>The intended permission map\<close>
 
 (* The three conditions of the permission map, as NAMED predicates rather than
    inline existentials. This is deliberate and load-bearing: keeping the
@@ -188,7 +116,76 @@ definition frame_perm :: "amp_partition \<Rightarrow> core_id \<Rightarrow> obj_
       else if maps_reader bp c f then PermR
       else PermNone)"
 
-section \<open>Buffer-frame branch facts\<close>
+section \<open>Proof development (internal machinery)\<close>
+
+subsection \<open>Well-formedness destructors (bounded projections)\<close>
+
+(* Channels connect distinct cores. Projection of amp_partition_wf conjunct 2.
+   The conjunct is first pulled out by simp (conjunction-elimination only, no
+   search), THEN instantiated by blast on that single small fact — crucially the
+   full definition, with its set-equality conjuncts, is never handed to blast. *)
+lemma wf_channel_distinct:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
+  shows "ch_from ch \<noteq> ch_to ch"
+proof -
+  from wf have "\<forall>ch \<in> ap_channels bp. ch_from ch \<noteq> ch_to ch
+                  \<and> ch_from ch \<in> dom (ap_cores bp) \<and> ch_to ch \<in> dom (ap_cores bp)"
+    by (simp add: amp_partition_wf_def)
+  with ch show ?thesis by blast
+qed
+
+(* Distinct channels have disjoint buffers. Projection of conjunct 4, extracted
+   the same way — simp projects the conjunct, blast instantiates it. *)
+lemma wf_buffers_disjoint:
+  assumes wf: "amp_partition_wf bp"
+      and c1: "ch1 \<in> ap_channels bp" and c2: "ch2 \<in> ap_channels bp" and ne: "ch1 \<noteq> ch2"
+  shows "ch_buffer ch1 \<inter> ch_buffer ch2 = {}"
+proof -
+  from wf have "\<forall>ch1 \<in> ap_channels bp. \<forall>ch2 \<in> ap_channels bp.
+                  ch1 \<noteq> ch2 \<longrightarrow> ch_buffer ch1 \<inter> ch_buffer ch2 = {}"
+    by (simp add: amp_partition_wf_def)
+  with c1 c2 ne show ?thesis by blast
+qed
+
+(* A frame lies in at most one channel's buffer: any channel whose buffer holds f
+   equals any other such channel. Immediate from buffer disjointness — this is the
+   form the permission proofs actually use. *)
+lemma wf_buffer_unique:
+  assumes wf: "amp_partition_wf bp"
+      and c1: "ch1 \<in> ap_channels bp" and c2: "ch2 \<in> ap_channels bp"
+      and f1: "f \<in> ch_buffer ch1" and f2: "f \<in> ch_buffer ch2"
+  shows "ch1 = ch2"
+  using wf_buffers_disjoint[OF wf c1 c2] f1 f2 by blast
+
+subsection \<open>B1 helper\<close>
+
+(* Helper: under a well-formed partition, one core's whole footprint is disjoint
+   from any OTHER core's private frames. owned_frames c meets owned_frames c'
+   only in channel buffers (owned_overlap_subset_channels), and a channel buffer
+   never intersects any core's private frames (amp_partition_wf_buffer_not_private),
+   so the meet with c''s private frames specifically is empty. This is the spatial
+   core of the whole phase; B1 and B3 both fall out of it. *)
+lemma owned_disjoint_other_private:
+  assumes wf:  "amp_partition_wf bp"
+      and c':  "ap_cores bp c' = Some r'"
+      and neq: "c \<noteq> c'"
+  shows "owned_frames bp c \<inter> cr_frames r' = {}"
+proof -
+  have sub: "cr_frames r' \<subseteq> owned_frames bp c'"
+    using c' by (auto simp: owned_frames_def)
+  have "owned_frames bp c \<inter> cr_frames r' \<subseteq> owned_frames bp c \<inter> owned_frames bp c'"
+    using sub by blast
+  also have "\<dots> \<subseteq> (\<Union>ch \<in> ap_channels bp. ch_buffer ch)"
+    using owned_overlap_subset_channels[OF wf neq] .
+  finally have in_bufs: "owned_frames bp c \<inter> cr_frames r'
+                           \<subseteq> (\<Union>ch \<in> ap_channels bp. ch_buffer ch)" .
+  (* no channel buffer meets c''s private frames (conjunct-3 destructor) *)
+  have "(\<Union>ch \<in> ap_channels bp. ch_buffer ch) \<inter> cr_frames r' = {}"
+    using amp_partition_wf_buffer_not_private[OF wf _ c'] by blast
+  with in_bufs show ?thesis by blast
+qed
+
+subsection \<open>Buffer-frame branch facts\<close>
 
 (* NB every negative fact below is proved by a structured obtain + explicit
    contradiction, NOT by handing wf_buffer_unique (which concludes an equality)
@@ -275,7 +272,38 @@ proof
   from amp_partition_wf_buffer_not_private[OF wf ch' c'] f f' show False by blast
 qed
 
-section \<open>B2 — the channel buffer is doubly mapped, asymmetrically\<close>
+subsection \<open>Static permission map\<close>
+
+(* The permission map is a function of the static boot partition alone, so a step
+   — which never modifies bp — leaves every core's permissions unchanged. Hence
+   the B2/B3 mapping invariants, being facts about frame_perm bp, are preserved
+   verbatim across any step. Stated explicitly to discharge the "established and
+   preserved" half of the exit test. *)
+lemma frame_perm_invariant_under_step:
+  "amp_step c m m' bp \<Longrightarrow> frame_perm bp = frame_perm bp"
+  by (rule refl)
+
+section \<open>Results\<close>
+
+subsection \<open>B1 — a step never touches another core's private memory\<close>
+
+(* B1: a single-core step by c changes none of any other core c''s private
+   frames. Immediate from confinement (changed frames \<subseteq> owned c) and the helper
+   above. This is the "a core can only touch memory it owns" guarantee, reduced
+   to seL4's integrity via amp_step. *)
+theorem amp_step_preserves_other_private:
+  assumes wf:   "amp_partition_wf bp"
+      and step: "amp_step c m m' bp"
+      and c':   "ap_cores bp c' = Some r'"
+      and neq:  "c \<noteq> c'"
+  shows "changed_frames m m' \<inter> cr_frames r' = {}"
+proof -
+  have "changed_frames m m' \<inter> cr_frames r' \<subseteq> owned_frames bp c \<inter> cr_frames r'"
+    using step by (auto simp: amp_step_def)
+  with owned_disjoint_other_private[OF wf c' neq] show ?thesis by blast
+qed
+
+subsection \<open>B2 — the channel buffer is doubly mapped, asymmetrically\<close>
 
 (* B2: on a declared channel's buffer frame, the sender endpoint holds read-write
    and the receiver endpoint holds read-only. This is the asymmetry the one-way
@@ -307,7 +335,7 @@ theorem buffer_perm_only_endpoints:
   by (simp add: frame_perm_def buffer_not_owns_priv[OF wf ch f]
                 other_not_maps_writer[OF wf ch f c] other_not_maps_reader[OF wf ch f c2])
 
-section \<open>B3 — no writable mapping to another core's private frames\<close>
+subsection \<open>B3 — no writable mapping to another core's private frames\<close>
 
 (* B3: no core holds read-write access to a DIFFERENT core's private frame. A
    PermRW verdict comes only from owns_priv (excluded, since private frames of
@@ -333,16 +361,7 @@ proof -
   ultimately show ?thesis by (simp add: frame_perm_def)
 qed
 
-section \<open>Preservation and the packaged invariant\<close>
-
-(* The permission map is a function of the static boot partition alone, so a step
-   — which never modifies bp — leaves every core's permissions unchanged. Hence
-   the B2/B3 mapping invariants, being facts about frame_perm bp, are preserved
-   verbatim across any step. Stated explicitly to discharge the "established and
-   preserved" half of the exit test. *)
-lemma frame_perm_invariant_under_step:
-  "amp_step c m m' bp \<Longrightarrow> frame_perm bp = frame_perm bp"
-  by (rule refl)
+subsection \<open>Packaged invariant\<close>
 
 (* Phase 2 exit theorem: for a well-formed partition, any single-core step keeps
    the system partitioned. It (1) changes no other core's private memory (B1) and
@@ -373,7 +392,9 @@ proof -
     using no_cross_writable[OF wf] by blast
 qed
 
-section \<open>The example two-core configuration is spatially isolated\<close>
+section \<open>Examples\<close>
+
+subsection \<open>The example two-core configuration is spatially isolated\<close>
 
 (* Concrete non-vacuity check: in the example two-core system, any step by core 0
    leaves core 1's private frames untouched. Instantiates B1 at example2, whose
