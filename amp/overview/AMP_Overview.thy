@@ -33,6 +33,7 @@ imports
   "AMP_Channel_C.AMP_Channel_C"    (* pulls in AMP_Channel_R, AMP_Channel_A, AMP_Spatial, AMP_Model *)
   "AMP_Channel_AC.AMP_Channel_AC"  (* the authority-graph layer, a sibling branch off AMP_Channel_A *)
   "AMP_Message.AMP_Message"        (* message content: integrity and confidentiality of VALUES *)
+  "AMP_Thread.AMP_Thread"          (* thread ownership: discharges sender_quiescent, trading it for A-THR *)
 begin
 
 (* THE VOCABULARY, in one place, so the statements below read without lookups.
@@ -67,10 +68,32 @@ begin
                           on every frame c holds any access to, None
                           elsewhere. Two memories giving c the same
                           observation are indistinguishable to it.
-     sender_quiescent     a NAMED, currently-unproven assumption: a channel's
-                          declared sender issues no further write to its own
-                          buffer while a message sits unread. See REQ-MSG-8
-                          and section 4(c) — this is not a free fact. *)
+     sender_quiescent     a channel's declared sender issues no further write
+                          to its own buffer while a message sits unread. As
+                          of REQ-MSG-8 below this is no longer an assumption
+                          about arbitrary application code — it is DISCHARGED
+                          by thread ownership (next entries), at the cost of
+                          one narrower, architectural assumption, A-THR.
+     thread_id, tp        a thread (thread_id, a bare identifier) and a
+                          thread_partition tp assigning each modelled thread
+                          to one core (tp_core) and naming, per declared
+                          channel, the ONE thread on each endpoint core
+                          allowed to touch the buffer (tp_send_owner,
+                          tp_recv_owner) — every other thread on that same
+                          core holds NO access to it at all.
+     owner_status ch tp xm   the scheduling status this development derives
+                          for ch's declared sender thread from ch's OWN
+                          runtime status: blocked exactly while ch is
+                          pending, running otherwise.
+     A-THR (thread_attribution)   the one new assumption REQ-MSG-8 now rests
+                          on: every core-level permission-respecting write is
+                          actually taken by some thread running on that core
+                          whose own thread-level authority already accounts
+                          for it. Not a claim about arbitrary application
+                          code (unlike the retired sender_quiescent) — an
+                          architectural fact about seL4's own subject-indexed
+                          `integrity` theorem, not yet discharged against it.
+                          See REQ-MSG-8 and section 4(c). *)
 
 
 section \<open>1. Isolation — cores do not share resources except through declared channels\<close>
@@ -314,38 +337,49 @@ theorem recv_ack_affects_only_its_own_channel:
   using rc by (auto simp: xchan_recv_ack_def)
 
 (* REQ-MSG-8. THE RECEIVER READS EXACTLY THE MESSAGE THE SENDER SENT — GIVEN
-   ONE NAMED ASSUMPTION. Everything above this line concerns WHO can reach a
-   message, never what its VALUE is; this is the first result about values.
-   Send a message msg on ch; let any amount of unrelated kernel activity run
-   while it sits pending, as long as none of it is a write this channel's own
-   sender issues to its own buffer during that window (`sender_quiescent` —
-   spelled out as an explicit hypothesis here rather than a locale, since this
-   file states results, not obligations); then recv/ack it. The value read
-   back is bit-for-bit the value sent. The parenthetical half of this is
-   unconditional and worth isolating: no core OTHER than the sender can ever
-   alter the message in flight, regardless of the hypothesis below — that
-   part follows from ISO-3/ISO-4 alone. What the hypothesis rules out is
-   narrower and sharper than it might sound: not "a race", but specifically
-   the sender rewriting its OWN already-pending message, which nothing
-   earlier in this file forbids (the sender holds PermRW on the buffer for
-   the system's entire lifetime — see 4(c)). *)
+   ONE NAMED, ARCHITECTURAL ASSUMPTION, NOT A CLAIM ABOUT APPLICATION CODE.
+   Everything above this line concerns WHO can reach a message, never what
+   its VALUE is; this is the first result about values. Send a message msg
+   on ch; let any amount of unrelated kernel activity run while it sits
+   pending; then recv/ack it. The value read back is bit-for-bit the value
+   sent. Earlier this theorem needed `sender_quiescent` — an assumption about
+   arbitrary, UNVERIFIED APPLICATION code (that the sender itself issues no
+   further write to its own buffer while pending). That assumption is GONE.
+   In its place is `thread_attribution` (A-THR): every core-level write is
+   actually taken by some THREAD running on that core, whose own thread-level
+   authority already accounts for it — combined with thread ownership
+   narrowing the buffer's write authority from the whole core down to one
+   declared owning thread, which is blocked (by construction) for exactly as
+   long as the channel sits pending. This is a strictly better hypothesis:
+   A-THR is one architectural fact about seL4's own subject-indexed
+   `integrity` theorem, not yet re-derived from it here, rather than a claim
+   about what arbitrary application code does or does not do — but it is
+   still a real, undischarged assumption, and this theorem is still
+   conditional on it, not unconditional; see section 4(c). The parenthetical
+   half remains unconditional and worth isolating: no core OTHER than the
+   sender can ever alter the message in flight, regardless of any hypothesis
+   here — that part follows from ISO-3/ISO-4 alone. *)
 theorem the_receiver_reads_exactly_what_was_sent:
   assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
-      and quiescent:
-        "\<And>(m :: obj_ref \<Rightarrow> 'v) m' xm. xm ch = Some XSendPending
-           \<Longrightarrow> amp_step_w (ch_from ch) m m' bp \<Longrightarrow> \<forall>f \<in> ch_buffer ch. m' f = m f"
+      and twf: "thread_partition_wf bp tp"
+      and attribution:
+        "\<And>(m :: obj_ref \<Rightarrow> 'v) m' xm. amp_step_w (ch_from ch) m m' bp
+           \<Longrightarrow> \<exists>t. tp_core tp t = Some (ch_from ch)
+                   \<and> amp_thread_step t m m' bp tp (owner_status ch tp xm)"
       and send: "xchan_send_msg ch (msg :: obj_ref \<Rightarrow> 'v) m m' xm0 xm1"
       and run:  "(quiescent_step bp xm1 ch)\<^sup>*\<^sup>* m' m''"
       and recv: "xchan_recv_ack ch xm1 xm2"
   shows "xchan_recv ch m'' = xchan_recv ch msg"
 proof -
-  interpret sender_quiescent "TYPE('v)" bp ch
+  interpret thread_ownership "TYPE('v)" bp ch tp
   proof unfold_locales
     show "amp_partition_wf bp" by (rule wf)
     show "ch \<in> ap_channels bp" by (rule ch)
-    show "\<And>(m :: obj_ref \<Rightarrow> 'v) m' xm. xm ch = Some XSendPending
-            \<Longrightarrow> amp_step_w (ch_from ch) m m' bp \<Longrightarrow> \<forall>f \<in> ch_buffer ch. m' f = m f"
-      using quiescent .
+    show "thread_partition_wf bp tp" by (rule twf)
+    show "\<And>(m :: obj_ref \<Rightarrow> 'v) m' xm. amp_step_w (ch_from ch) m m' bp
+            \<Longrightarrow> \<exists>t. tp_core tp t = Some (ch_from ch)
+                    \<and> amp_thread_step t m m' bp tp (owner_status ch tp xm)"
+      using attribution .
   qed
   show ?thesis using send run recv by (rule message_integrity)
 qed
@@ -472,40 +506,46 @@ section \<open>4. What is NOT established\<close>
        read the messaging section as a delivery-time or delivery-at-all
        guarantee.
 
-   (c) MESSAGE CONTENT'S REMAINING GAP IS NARROWER THAN IT WAS: CONFIDENTIALITY
-       IS UNCONDITIONAL, INTEGRITY IS CONDITIONAL ON ONE NAMED, UNPROVEN
-       ASSUMPTION. Earlier this file had no message-VALUE result at all — only
-       WHERE a message lands and WHO can reach it (MSG-1, MSG-2), never whether
-       the bytes read are the bytes written, or whether a third core learns
-       anything about them. That gap is now split in two. The confidentiality
-       half is CLOSED, outright: MSG-9 says no core outside a channel's two
-       endpoints learns anything from a send, for any message value, with no
-       extra hypothesis — it costs nothing beyond ISO-4, because a core with no
-       mapping to the buffer has nothing to observe a changing value through.
-       The integrity half is ESTABLISHED BUT CONDITIONAL: MSG-8 says the
-       receiver reads exactly what the sender sent, but only GIVEN
-       `sender_quiescent` — that the sender itself issues no further write to
-       its own buffer while the message sits pending. That assumption is a
-       genuine, currently unproven claim about the sender's own code, not
-       something derivable from anything proved so far, and it is not
-       discharged anywhere in this file. Here is why it is needed, because it
-       is not obvious: the sender retains PermRW on the buffer for the
-       system's whole lifetime (ISO-5 is static), so nothing here stops it
-       rewriting a message it has already marked pending. That is not a
-       security violation — the sender is the message's author and no third
-       core is involved — but it does mean a receiver may observe a torn
-       message without this extra hypothesis, which is exactly why MSG-8 needs
-       it rather than following from ISO-3 alone. Until a later development
-       discharges `sender_quiescent` outright (by proving it as a genuine
-       invariant of the sender's own reachable code, rather than assuming it),
-       MSG-8 is the one content-level guarantee in this file that is
-       conditional rather than outright — read it accordingly. Separately,
-       MSG-10 records that the acknowledgement is a real, bounded backward
-       flow (one status bit per round trip, no content) that any FUTURE
-       confidentiality claim between the two endpoints themselves — something
-       this file does not attempt — would have to account for rather than rule
-       out. Serialisation, framing, and payload encoding remain outside this
-       development entirely and always will be.
+   (c) MESSAGE CONTENT'S REMAINING GAP IS NARROWER STILL: CONFIDENTIALITY IS
+       UNCONDITIONAL; INTEGRITY IS CONDITIONAL ON ONE NAMED ARCHITECTURAL
+       ASSUMPTION, NO LONGER ON A CLAIM ABOUT APPLICATION CODE. Earlier this
+       file had no message-VALUE result at all — only WHERE a message lands
+       and WHO can reach it (MSG-1, MSG-2). That gap split in two, and each
+       half has since narrowed further. The confidentiality half is CLOSED,
+       outright: MSG-9 says no core outside a channel's two endpoints learns
+       anything from a send, for any message value, with no extra hypothesis
+       — it costs nothing beyond ISO-4, because a core with no mapping to the
+       buffer has nothing to observe a changing value through. The integrity
+       half, MSG-8, is ESTABLISHED BUT STILL CONDITIONAL — its hypothesis has
+       changed kind, not disappeared. It used to rest on `sender_quiescent`:
+       a genuine, unproven claim about the SENDER'S OWN APPLICATION CODE (that
+       it issues no further write to its own buffer while a message sits
+       pending) — needed because the sender retains PermRW on the buffer for
+       the system's whole lifetime (ISO-5 is static), so nothing stopped it
+       rewriting a message it had already marked pending, and nothing about
+       arbitrary application code was modelled here to rule that out. Thread
+       ownership (a later, separate development) DISCHARGES that claim
+       outright, by narrowing the buffer's write authority from the whole
+       sending core down to one declared owning thread, and observing that a
+       sender blocked awaiting its own acknowledgement cannot be the thread
+       issuing a conflicting write. `sender_quiescent` is consequently no
+       longer named in MSG-8's hypotheses at all. What replaces it is
+       `thread_attribution` (A-THR): every core-level permission-respecting
+       write is actually taken by SOME thread running on that core, in a way
+       thread ownership's own bookkeeping already accounts for. This is a
+       strictly better hypothesis to carry — A-THR is one architectural fact
+       about seL4's own subject-indexed `integrity` theorem (that a kernel
+       step is always taken on behalf of one specific authorised subject),
+       not a claim about what arbitrary, unverified application code chooses
+       to do — but it is not yet re-derived from that real theorem here, so
+       MSG-8 remains a CONDITIONAL guarantee, not an outright one, and must
+       not be read as such. Separately, MSG-10 records that the
+       acknowledgement is a real, bounded backward flow (one status bit per
+       round trip, no content) that any FUTURE confidentiality claim between
+       the two endpoints themselves — something this file does not attempt —
+       would have to account for rather than rule out. Serialisation,
+       framing, and payload encoding remain outside this development
+       entirely and always will be.
 
    (d) THE PER-CORE STEP RELATION IS AN ASSUMPTION. `amp_step` — "a core's
        kernel step writes only frames that core owns" — is the abstraction of
@@ -581,5 +621,16 @@ theorem a_real_messages_send_is_invisible_to_a_bystander:
   assumes send: "xchan_send_msg chan01 example_msg m m' xm xm'"
   shows "observation example2 99 m = observation example2 99 m'"
   using example2_send_is_invisible_to_a_bystander[OF send] .
+
+(* And MSG-8's new hypothesis is satisfiable, not vacuous either: a genuine
+   thread-ownership assignment over the example system exists (thread 10
+   owns chan01's send side on core 0, thread 20 its receive side on core 1),
+   so the thread_partition_wf premise thread ownership adds is not an empty
+   requirement. (No witness is given, or should be, for the remaining
+   thread_attribution/A-THR hypothesis itself — see section 4(c) and the
+   AMP_Thread theory header for why any such witness would be vacuous.) *)
+theorem a_real_thread_ownership_assignment_exists:
+  "thread_partition_wf example2 example_tp"
+  using example_tp_wf .
 
 end

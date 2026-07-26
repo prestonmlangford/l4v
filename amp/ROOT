@@ -91,6 +91,18 @@ session AMP_Message in "message" = AMP_Channel_AC +
   theories
     "AMP_Message"
 
+(* Phase 5.75 -- channel thread ownership (T1-T4): narrows write authority on
+   a channel buffer from the CORE (Phase 2's frame_perm) to one designated
+   owning THREAD per endpoint, and thereby discharges Phase 5.5's
+   sender_quiescent locale outright (via a sublocale relationship) -- trading
+   it in the TCB for a single new attribution assumption, A-THR, packaged as
+   the thread_ownership locale. Builds on the cached AMP_Message heap, per the
+   plan's "Reuses: Phases 1, 2, 3, 5, 5.5". *)
+session AMP_Thread in "thread" = AMP_Message +
+  description \<open>Phase 5.75: channel thread ownership -- narrows write authority from core to owning thread, discharging sender_quiescent (traded for A-THR).\<close>
+  theories
+    "AMP_Thread"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read
@@ -103,5 +115,6 @@ session AMP_Overview in "overview" = AMP_Channel_C +
   sessions
     AMP_Channel_AC
     AMP_Message
+    AMP_Thread
   theories
     "AMP_Overview"
