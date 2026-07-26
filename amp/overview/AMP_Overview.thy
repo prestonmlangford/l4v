@@ -32,6 +32,7 @@ theory AMP_Overview
 imports
   "AMP_Channel_C.AMP_Channel_C"    (* pulls in AMP_Channel_R, AMP_Channel_A, AMP_Spatial, AMP_Model *)
   "AMP_Channel_AC.AMP_Channel_AC"  (* the authority-graph layer, a sibling branch off AMP_Channel_A *)
+  "AMP_Message.AMP_Message"        (* message content: integrity and confidentiality of VALUES *)
 begin
 
 (* THE VOCABULARY, in one place, so the statements below read without lookups.
@@ -56,7 +57,20 @@ begin
      xchan_send,          the channel protocol: send requires the channel idle
      xchan_recv_ack       and leaves it send-pending; recv/ack requires it
                           send-pending and leaves it idle.
-     amp_auth_graph bp    who the boot config SAYS may send/receive on what. *)
+     amp_auth_graph bp    who the boot config SAYS may send/receive on what.
+     xchan_send_msg,      the channel protocol WITH a message value attached:
+     xchan_recv           send additionally requires the buffer to hold msg
+                          afterwards; recv reads the buffer back out as an
+                          option-valued function (Some on buffer frames, None
+                          elsewhere).
+     observation bp c m   everything core c can see of memory m: Some (m f)
+                          on every frame c holds any access to, None
+                          elsewhere. Two memories giving c the same
+                          observation are indistinguishable to it.
+     sender_quiescent     a NAMED, currently-unproven assumption: a channel's
+                          declared sender issues no further write to its own
+                          buffer while a message sits unread. See REQ-MSG-8
+                          and section 4(c) — this is not a free fact. *)
 
 
 section \<open>1. Isolation — cores do not share resources except through declared channels\<close>
@@ -299,6 +313,80 @@ theorem recv_ack_affects_only_its_own_channel:
   shows "\<forall>d. d \<noteq> ch \<longrightarrow> xm' d = xm d"
   using rc by (auto simp: xchan_recv_ack_def)
 
+(* REQ-MSG-8. THE RECEIVER READS EXACTLY THE MESSAGE THE SENDER SENT — GIVEN
+   ONE NAMED ASSUMPTION. Everything above this line concerns WHO can reach a
+   message, never what its VALUE is; this is the first result about values.
+   Send a message msg on ch; let any amount of unrelated kernel activity run
+   while it sits pending, as long as none of it is a write this channel's own
+   sender issues to its own buffer during that window (`sender_quiescent` —
+   spelled out as an explicit hypothesis here rather than a locale, since this
+   file states results, not obligations); then recv/ack it. The value read
+   back is bit-for-bit the value sent. The parenthetical half of this is
+   unconditional and worth isolating: no core OTHER than the sender can ever
+   alter the message in flight, regardless of the hypothesis below — that
+   part follows from ISO-3/ISO-4 alone. What the hypothesis rules out is
+   narrower and sharper than it might sound: not "a race", but specifically
+   the sender rewriting its OWN already-pending message, which nothing
+   earlier in this file forbids (the sender holds PermRW on the buffer for
+   the system's entire lifetime — see 4(c)). *)
+theorem the_receiver_reads_exactly_what_was_sent:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
+      and quiescent:
+        "\<And>(m :: obj_ref \<Rightarrow> 'v) m' xm. xm ch = Some XSendPending
+           \<Longrightarrow> amp_step_w (ch_from ch) m m' bp \<Longrightarrow> \<forall>f \<in> ch_buffer ch. m' f = m f"
+      and send: "xchan_send_msg ch (msg :: obj_ref \<Rightarrow> 'v) m m' xm0 xm1"
+      and run:  "(quiescent_step bp xm1 ch)\<^sup>*\<^sup>* m' m''"
+      and recv: "xchan_recv_ack ch xm1 xm2"
+  shows "xchan_recv ch m'' = xchan_recv ch msg"
+proof -
+  interpret sender_quiescent "TYPE('v)" bp ch
+  proof unfold_locales
+    show "amp_partition_wf bp" by (rule wf)
+    show "ch \<in> ap_channels bp" by (rule ch)
+    show "\<And>(m :: obj_ref \<Rightarrow> 'v) m' xm. xm ch = Some XSendPending
+            \<Longrightarrow> amp_step_w (ch_from ch) m m' bp \<Longrightarrow> \<forall>f \<in> ch_buffer ch. m' f = m f"
+      using quiescent .
+  qed
+  show ?thesis using send run recv by (rule message_integrity)
+qed
+
+(* REQ-MSG-9. NO CORE OUTSIDE THE CHANNEL LEARNS ANYTHING FROM A SEND — FOR
+   ANY MESSAGE VALUE, UNCONDITIONALLY. Take any core c that is neither ch's
+   declared sender nor its declared receiver. Whatever c can observe of
+   memory (every frame it holds any access to at all) is EXACTLY the same
+   before and after a send on ch, no matter what the message says. Unlike
+   MSG-8, this needs no quiescence hypothesis and no locale: it costs nothing
+   to establish because c holds no mapping to the buffer at all (ISO-4), so
+   there is nothing for a changing value to be seen THROUGH. This is the
+   storage-channel confidentiality half of message security — the first
+   result in this file that is a genuine claim about VALUES rather than
+   permissions, and the one that needed message content in the model before
+   it could even be stated (see 4(c), the gap this closes). *)
+theorem no_core_outside_the_channel_learns_anything_from_a_send:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
+      and send: "xchan_send_msg ch msg m m' xm xm'"
+      and c1: "c \<noteq> ch_from ch" and c2: "c \<noteq> ch_to ch"
+  shows "observation bp c m = observation bp c m'"
+  using xchan_send_msg_invisible_to_third_core[OF wf ch send c1 c2] .
+
+(* REQ-MSG-10. THE ACKNOWLEDGEMENT IS A REAL, BUT BOUNDED, BACKWARD FLOW. The
+   channel is one-way for DATA — REQ-ISO-5 already says the receiver holds no
+   write mapping at all — but a working protocol still needs the receiver to
+   tell the sender "consumed", and that IS a flow from receiver to sender.
+   This states its exact size: recv/ack changes ch's own status entry to
+   idle and nothing else — no other channel's status, and (definitionally,
+   since recv/ack has no memory operand at all) no message content
+   whatsoever. One bit, once per round trip, carrying no payload. This
+   matters for how to read section 1: a claim that the two endpoints of a
+   channel learn NOTHING from each other would be false, and any future
+   cross-core confidentiality result (beyond this file) must be phrased to
+   ALLOW this one declared bit, not to assert its absence. *)
+theorem the_acknowledgement_carries_no_message_content:
+  assumes rc: "xchan_recv_ack ch xm xm'"
+  shows "xm' ch = Some XIdle"
+    and "\<forall>d. d \<noteq> ch \<longrightarrow> xm' d = xm d"
+  using xchan_recv_ack_reverse_flow_is_bounded_to_one_status_bit[OF rc] by blast+
+
 
 section \<open>3. Durability — the guarantees survive operation, and reach the implementation\<close>
 
@@ -384,12 +472,40 @@ section \<open>4. What is NOT established\<close>
        read the messaging section as a delivery-time or delivery-at-all
        guarantee.
 
-   (c) MESSAGE CONTENT IS NOT MODELLED. Buffer contents are deliberately
-       abstract throughout. "Delivered to the correct recipient" is proved in
-       the sense of WHERE the message lands and WHO can see it (MSG-1, MSG-2) —
-       not in the sense that the bytes the receiver reads are the bytes the
-       sender wrote. Serialisation, framing, and payload integrity are outside
-       this development entirely.
+   (c) MESSAGE CONTENT'S REMAINING GAP IS NARROWER THAN IT WAS: CONFIDENTIALITY
+       IS UNCONDITIONAL, INTEGRITY IS CONDITIONAL ON ONE NAMED, UNPROVEN
+       ASSUMPTION. Earlier this file had no message-VALUE result at all — only
+       WHERE a message lands and WHO can reach it (MSG-1, MSG-2), never whether
+       the bytes read are the bytes written, or whether a third core learns
+       anything about them. That gap is now split in two. The confidentiality
+       half is CLOSED, outright: MSG-9 says no core outside a channel's two
+       endpoints learns anything from a send, for any message value, with no
+       extra hypothesis — it costs nothing beyond ISO-4, because a core with no
+       mapping to the buffer has nothing to observe a changing value through.
+       The integrity half is ESTABLISHED BUT CONDITIONAL: MSG-8 says the
+       receiver reads exactly what the sender sent, but only GIVEN
+       `sender_quiescent` — that the sender itself issues no further write to
+       its own buffer while the message sits pending. That assumption is a
+       genuine, currently unproven claim about the sender's own code, not
+       something derivable from anything proved so far, and it is not
+       discharged anywhere in this file. Here is why it is needed, because it
+       is not obvious: the sender retains PermRW on the buffer for the
+       system's whole lifetime (ISO-5 is static), so nothing here stops it
+       rewriting a message it has already marked pending. That is not a
+       security violation — the sender is the message's author and no third
+       core is involved — but it does mean a receiver may observe a torn
+       message without this extra hypothesis, which is exactly why MSG-8 needs
+       it rather than following from ISO-3 alone. Until a later development
+       discharges `sender_quiescent` outright (by proving it as a genuine
+       invariant of the sender's own reachable code, rather than assuming it),
+       MSG-8 is the one content-level guarantee in this file that is
+       conditional rather than outright — read it accordingly. Separately,
+       MSG-10 records that the acknowledgement is a real, bounded backward
+       flow (one status bit per round trip, no content) that any FUTURE
+       confidentiality claim between the two endpoints themselves — something
+       this file does not attempt — would have to account for rather than rule
+       out. Serialisation, framing, and payload encoding remain outside this
+       development entirely and always will be.
 
    (d) THE PER-CORE STEP RELATION IS AN ASSUMPTION. `amp_step` — "a core's
        kernel step writes only frames that core owns" — is the abstraction of
@@ -416,11 +532,15 @@ section \<open>4. What is NOT established\<close>
        the specification but still above the shipped binary. Nothing in this file
        depends on the C session's results, deliberately.
 
-   (g) NO INFORMATION-FLOW / TIMING CLAIM. ISO-4 and MSG-2 rule out a third core
-       READING a message. They say nothing about timing channels, cache-based
-       side channels, shared-bus contention, or any other non-architectural
-       flow. Cross-core confidentiality in the information-flow sense is not
-       established. *)
+   (g) NO TIMING / SIDE-CHANNEL CLAIM. ISO-4, MSG-2, and now MSG-9 rule out a
+       third core reading a message, or learning its VALUE through the
+       storage channel the buffer mapping provides. None of them say anything
+       about timing channels, cache-based side channels, shared-bus
+       contention, or any other non-architectural flow — MSG-9's
+       noninterference result is a storage-channel claim only, matching the
+       scope single-core InfoFlow already commits to. Timing-channel
+       cross-core confidentiality is not established and is out of scope
+       permanently, not merely deferred. *)
 
 
 section \<open>5. Non-vacuity — the guarantees are not empty\<close>
@@ -453,5 +573,13 @@ theorem a_real_configurations_authority_is_as_declared:
   "(1, XRecv, chan01) \<in> amp_auth_graph example2"
   "(1, XSend, chan01) \<notin> amp_auth_graph example2"
   using example2_auth_graph_edges example2_core1_has_no_send_authority by blast+
+
+(* And a real message value, sent on that same channel, is invisible to a
+   bystander core outside it — witnessed concretely rather than only proved
+   in the abstract, so MSG-9 is not true-but-empty either. *)
+theorem a_real_messages_send_is_invisible_to_a_bystander:
+  assumes send: "xchan_send_msg chan01 example_msg m m' xm xm'"
+  shows "observation example2 99 m = observation example2 99 m'"
+  using example2_send_is_invisible_to_a_bystander[OF send] .
 
 end

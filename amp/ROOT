@@ -77,6 +77,20 @@ session AMP_Channel_AC in "channel_ac" = AMP_Channel_A +
   theories
     "AMP_Channel_AC"
 
+(* Phase 5.5 -- message content, integrity & confidentiality (M1-M4): gives
+   the channel protocol a message operand (xchan_send_msg/xchan_recv), then
+   proves the receiver reads exactly what the sender sent (M2, under the
+   named sender_quiescent locale -- Phase 6's D2 discharges it), that a send
+   is invisible to any core outside the channel for any message value (M3,
+   unconditional), and that the acknowledgement's real backward flow is
+   bounded to one channel-status bit with zero content (M4). Runs in
+   parallel with Phase 6; needs nothing from it. Builds on the cached
+   AMP_Channel_AC heap (Phase 5), per the plan's "Reuses: Phases 1, 2, 3, 5". *)
+session AMP_Message in "message" = AMP_Channel_AC +
+  description \<open>Phase 5.5: message content -- the receiver reads what the sender sent (under sender_quiescent); a send is invisible outside its declared endpoints; the ack's reverse flow is bounded to one status bit.\<close>
+  theories
+    "AMP_Message"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read
@@ -88,5 +102,6 @@ session AMP_Overview in "overview" = AMP_Channel_C +
   description \<open>Cumulative specification index: every phase's headline theorem, restated next to its plain-English meaning and re-derived from the real proof.\<close>
   sessions
     AMP_Channel_AC
+    AMP_Message
   theories
     "AMP_Overview"
