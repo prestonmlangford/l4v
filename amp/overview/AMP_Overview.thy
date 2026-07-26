@@ -34,6 +34,7 @@ imports
   "AMP_Channel_AC.AMP_Channel_AC"  (* the authority-graph layer, a sibling branch off AMP_Channel_A *)
   "AMP_Message.AMP_Message"        (* message content: integrity and confidentiality of VALUES *)
   "AMP_Thread.AMP_Thread"          (* thread ownership: discharges sender_quiescent, trading it for A-THR *)
+  "AMP_Concurrency.AMP_Concurrency" (* the interleaved model, and its refinement to the atomic protocol *)
 begin
 
 (* THE VOCABULARY, in one place, so the statements below read without lookups.
@@ -93,7 +94,33 @@ begin
                           code (unlike the retired sender_quiescent) — an
                           architectural fact about seL4's own subject-indexed
                           `integrity` theorem, not yet discharged against it.
-                          See REQ-MSG-8 and section 4(c). *)
+                          See REQ-MSG-8 and section 4(c).
+     cstep, csteps        one step, and one finite TRACE, of the system as it
+                          actually runs: the two kernels' buffer copies
+                          happening one frame at a time, with any other
+                          thread's activity free to interleave ANYWHERE,
+                          including in the middle of a copy. This is the
+                          concurrent system the atomic protocol above is a
+                          description OF; see REQ-DUR-4.
+     cs_recv_val s        what the receiving APPLICATION holds: the buffer the
+                          receiving kernel copied the message into, which
+                          deliberately outlives the acknowledgement. REQ-MSG-11
+                          is the claim about this.
+     abs_mem, atrace      how a concurrent execution is read as a run of the
+                          atomic protocol: abs_mem is memory as that protocol
+                          sees it, and atrace maps a real execution's steps to
+                          the protocol operations they perform (a copy-loop
+                          iteration performs none). Both are COMPUTED from the
+                          execution, not chosen — see REQ-DUR-4.
+     asteps, alternates   a run of the atomic protocol (a sequence of
+                          xchan_send_msg / xchan_recv_ack / other-thread
+                          steps), and the property that its sends and
+                          acknowledgements strictly alternate.
+     A-AVL                the accepted availability gap: a sender blocks until
+                          its message is acknowledged, with no timeout, so a
+                          receiver that never acknowledges wedges it forever.
+                          Not an assumption — a known-false property, disclosed
+                          rather than assumed away. See section 4(b). *)
 
 
 section \<open>1. Isolation — cores do not share resources except through declared channels\<close>
@@ -421,6 +448,35 @@ theorem the_acknowledgement_carries_no_message_content:
     and "\<forall>d. d \<noteq> ch \<longrightarrow> xm' d = xm d"
   using xchan_recv_ack_reverse_flow_is_bounded_to_one_status_bit[OF rc] by blast+
 
+(* REQ-MSG-11. THE RECEIVING APPLICATION ENDS UP HOLDING THE MESSAGE THAT WAS
+   SENT, UNDER ANY INTERLEAVING — AND GOES ON HOLDING IT. MSG-8 is a claim
+   about what is in the shared buffer at the moment of the acknowledgement.
+   That is the right claim for a protocol, and the wrong one for an
+   application, which does not read the shared buffer: it reads whatever the
+   kernel put in ITS memory. This states the application's claim. Run the real
+   system — the sending kernel copying the message into the buffer one frame
+   at a time, the receiving kernel copying it back out one frame at a time,
+   with ANY amount of other threads' activity interleaved anywhere, in any
+   order — and at the acknowledgement the receiving application's own buffer
+   holds the sent message, every frame of it, bit for bit. Two things are
+   worth reading carefully. First, "any interleaving" is literal: nothing
+   constrains the trace, and in particular nothing rules out other threads
+   running in the middle of either copy. A partially written buffer is a state
+   the model genuinely has; this says the receiver can never be looking at
+   one. Second, the guarantee is about memory the APPLICATION still owns after
+   the channel has gone idle and the sender has been released — so it is not
+   invalidated by whatever the sender does next. That is why the channel copies
+   rather than sharing a pointer: a zero-copy receiver could read the frame at
+   any time, including after the acknowledgement, and no kernel-side property
+   could bound that. See section 4(a) for the one thing this does NOT say. *)
+theorem the_receiving_application_holds_the_message_that_was_sent:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
+      and init: "conc_init ch s"
+      and run: "csteps bp ch tp msg s ls s'"
+      and ack: "cstep bp ch tp msg s' CRecvCommit s''"
+  shows "\<forall>f \<in> ch_buffer ch. cs_recv_val s'' f = Some (msg f)"
+  using delivered_message_is_intact[OF wf ch init run ack] .
+
 
 section \<open>3. Durability — the guarantees survive operation, and reach the implementation\<close>
 
@@ -477,34 +533,144 @@ proof -
   finally show ?thesis .
 qed
 
+(* REQ-DUR-4. THE GUARANTEES DESCRIBE A CONCURRENTLY EXECUTING SYSTEM, NOT AN
+   ATOMIC IDEALISATION OF ONE. This is the requirement that licenses reading
+   every messaging guarantee above as a statement about real hardware, and
+   without it they would all be quietly conditional on an assumption nobody had
+   written down.
+
+   Sections 1 to 3 state the channel protocol as ATOMIC: a send is one
+   indivisible operation, an acknowledgement is another. Real hardware does no
+   such thing. The sending kernel copies a message into the shared buffer one
+   frame at a time; the receiving kernel copies it back out one frame at a
+   time; both cores keep running throughout, and any other thread may take a
+   step between any two of those instructions. So there is a real question the
+   requirement list above cannot answer on its own: is the atomic protocol a
+   faithful description of that system, or a convenient fiction?
+
+   It is faithful, and this is the proof. Take ANY execution of the real
+   interleaved system — any number of round trips, any interleaving of the two
+   copy loops with each other and with any other threads' activity, any length,
+   any order. That execution performs a run of the ATOMIC protocol: each of the
+   two status-word stores performs one whole abstract operation, every other
+   thread's step is an ordinary permission-respecting step, and the copy-loop
+   iterations perform nothing at all — they are invisible at the protocol
+   level, which is precisely what "the send is atomic" means. The correspondence
+   is COMPUTED from the execution rather than chosen for it, so there is no
+   freedom hidden in the argument.
+
+   The second conclusion is what makes this a statement about a running system
+   rather than about one message: the sends and acknowledgements of any
+   execution STRICTLY ALTERNATE, beginning with a send. Never two sends without
+   an intervening acknowledgement; never an acknowledgement of something that
+   was not sent. MSG-3 and MSG-5 said this about the abstract protocol; this
+   says it about the machine.
+
+   This result is here, rather than being omitted as internal refinement
+   machinery, for one reason: it is a claim about the running system. An
+   application developer who learns that the guarantee list describes only a
+   serialised idealisation of the kernel would rightly change their design.
+   See section 4(a) for the three things this does not extend to. *)
+theorem the_guarantees_survive_concurrent_execution:
+  assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
+      and nemp: "ch_buffer ch \<noteq> {}"
+      and init: "conc_init ch s"
+      and run: "csteps bp ch tp msg s ls s'"
+  shows "asteps bp ch tp msg (abs_mem ch s) (cs_xm s) (atrace ls)
+                             (abs_mem ch s') (cs_xm s')"
+    and "alternates XIdle (atrace ls)"
+  using every_run_refines_the_atomic_protocol[OF wf ch nemp init run]
+        runs_alternate_send_and_ack[OF wf ch nemp init run] by blast+
+
 
 section \<open>4. What is NOT established\<close>
 
 (* Every requirement above is conditional, and the conditions matter. Read this
    section as part of the guarantee, not as a caveat appended to it.
 
-   (a) NO CONCURRENCY. Everything above concerns a SINGLE step, or a single
-       send/receive pair considered in isolation. Nothing here covers two cores
-       stepping concurrently, interleaved, or racing. In particular: MSG-3's
-       "a pending message cannot be overwritten" says no ENABLED send exists
-       while a message is pending — it does NOT rule out a sender and a receiver
-       racing on the status word on real hardware, nor establish the memory
-       barriers and cache maintenance a real buffer handoff requires. The
-       isolation results (section 1) are the ones that survive this gap best,
-       since they are properties of a static configuration rather than of an
-       execution; the messaging results (section 2) are the ones that most need
-       the concurrency work before they describe real hardware. This is the
-       largest open gap and the one with the most remaining risk.
+   (a) CONCURRENCY IS COVERED; ITS REMAINING GAPS ARE THESE FOUR, AND THEY ARE
+       NOT "no concurrency". This entry used to read "NO CONCURRENCY —
+       everything above concerns a single step considered in isolation". That
+       is no longer the situation: DUR-4 shows any interleaved execution of the
+       real system performs a run of the atomic protocol, and MSG-11 shows the
+       receiving application ends up holding the message under any interleaving
+       whatsoever. What remains is smaller and more specific, and each item
+       should be read on its own rather than as a residue of the old gap.
 
-   (b) NO LIVENESS, NO AVAILABILITY. Nothing above says a message is ever
-       delivered, that a receiver ever runs, that a sender ever gets its channel
-       back, or that any operation terminates. "Every RECEIVED message is
-       acknowledged" (MSG-4) is proved; "every SENT message is eventually
-       received" is not, and cannot be without a model of scheduling and
-       progress that this development does not have. A core that never receives
-       will wedge its channel forever, and nothing here forbids that. Do not
-       read the messaging section as a delivery-time or delivery-at-all
-       guarantee.
+       (i) FIDELITY OF THE MODEL TO REAL HARDWARE IS ASSUMED, NOT PROVED, AND
+           THIS IS THE LARGEST OF THE FOUR. The interleaving results are about
+           a formal model in which memory operations take effect in the order
+           the trace gives them. Three assumptions carry that model to a real
+           RISC-V multicore: A-MEM (correctly-fenced RVWMO accesses behave
+           sequentially consistently — a hardware fact, trusted the way seL4
+           already trusts its machine model), A-COH (the shared buffer is
+           cache-coherent across the U54 harts), and A-BIN (the compiler does
+           not reorder the fences out — the same unproven binary-level gap
+           every result in this file inherits). None appears as a hypothesis of
+           any theorem above, because they justify the RELATIONSHIP between the
+           model and the hardware rather than any step inside a proof. Related
+           and separately unproved: that the shipped code actually EMITS the
+           required fences around each copy loop. Read together, these mean the
+           concurrency results say "given that real execution is faithfully
+           represented by some trace of this model, the protocol is correct" —
+           a real and useful statement, and not an unconditional one.
+
+       (ii) A-THR IS CONSUMED HERE TOO, NOT DISCHARGED. Every other thread's
+           step in the interleaved model is attributed to an explicitly named
+           thread by construction. That is not a way of avoiding A-THR; it IS
+           A-THR's content ("every core-level permission-respecting write is
+           actually taken by some thread"), built into the shape of the model
+           instead of stated as a hypothesis and invoked. Do not read the
+           concurrency work as having retired it — see (c).
+
+       (iii) ONE CHANNEL PER EXECUTION. The interleaved model covers one
+           channel's protocol, with arbitrary other-thread activity around it.
+           Multiple channels' protocols genuinely racing is not modelled;
+           MSG-7 (channels do not interfere) is the reason that is believed
+           harmless, and it is an argument rather than a proof of this
+           particular composition.
+
+       (iv) INTEGRITY IS PROVED; FRESHNESS IS NOT. The message content is a
+           fixed parameter of the interleaved model, so the repeated round
+           trips DUR-4 covers all carry the SAME message. Every single round
+           trip is therefore fully covered — MSG-11 holds for every message
+           value, under every interleaving — but one specific fault is
+           invisible to the model as it stands: a receiver delivering the
+           PREVIOUS message's bytes instead of the current one's would satisfy
+           every theorem above, because with one fixed message value the two
+           are the same bytes. So "no torn or corrupt value is ever delivered"
+           is established; "the value delivered is the one from the send being
+           acknowledged" is not. Closing this means stating integrity against
+           the buffer snapshot each send publishes rather than against a fixed
+           parameter, which is a change to the integrity invariant rather than
+           a widened quantifier.
+
+       The isolation results (section 1) do not depend on ANY of this. They are
+       properties of a static configuration enforced per-access by each hart's
+       own MMU, so no interleaving can break them.
+
+   (b) NO LIVENESS, AND AVAILABILITY IS KNOWN-BROKEN BY DESIGN (A-AVL). Nothing
+       above says a message is ever delivered, that a receiver ever runs, that a
+       sender ever gets its channel back, or that any operation terminates.
+       "Every RECEIVED message is acknowledged" (MSG-4) is proved; "every SENT
+       message is eventually received" is not, and cannot be without a model of
+       scheduling and progress that this development does not have.
+
+       Beyond the ordinary absence of liveness there is one specific,
+       DELIBERATE design decision that must not be discovered the hard way. A
+       sender blocks until its message is acknowledged, and there is NO TIMEOUT
+       — mirroring seL4's own `seL4_Send`, which likewise blocks indefinitely.
+       A receiver that never acknowledges — crashed, malicious, or merely slow
+       — therefore wedges the sending thread permanently. This is a real
+       receiver-to-sender interference channel and a denial-of-service vector
+       against the sender, and it is NOT an assumption: it is a property known
+       to be false, accepted as the price of a protocol whose safety is
+       provable, and named A-AVL so that nobody has to infer it. Read MSG-10's
+       "bounded backward flow" with this in mind: the acknowledgement carries
+       one bit of DATA, but the sender's PROGRESS is entirely at the receiver's
+       discretion. Do not place a channel's send side on a core whose
+       availability matters unless you control the receiver. A wait-free
+       channel that removes this is designed but not built.
 
    (c) MESSAGE CONTENT'S REMAINING GAP IS NARROWER STILL: CONFIDENTIALITY IS
        UNCONDITIONAL; INTEGRITY IS CONDITIONAL ON ONE NAMED ARCHITECTURAL
@@ -632,5 +798,28 @@ theorem a_real_messages_send_is_invisible_to_a_bystander:
 theorem a_real_thread_ownership_assignment_exists:
   "thread_partition_wf example2 example_tp"
   using example_tp_wf .
+
+(* And DUR-4 is witnessed on a genuinely interleaved execution rather than a
+   serialised one, which matters more here than for the requirements above: a
+   refinement result whose only instances were sequential executions would be
+   true and worthless. This is a real six-step execution of the example system
+   — the sending kernel storing into the buffer, a THIRD thread taking a step
+   in the middle of that copy, the send's status store, the receiving kernel's
+   copy, and the acknowledgement — and it performs the three-operation protocol
+   run you would expect: the interleaved thread's step, one whole send, one
+   whole acknowledgement. Both copy loops have vanished at the protocol level,
+   which is DUR-4's content made concrete. *)
+theorem a_real_interleaved_execution_performs_a_protocol_run:
+  "atrace [COwnerWrite 0x8000, COther 20, COwnerCommit,
+           CRecvStart, CRecvCopy 0x8000, CRecvCommit]
+   = [AOther 20, ASend, AAck]"
+  "\<exists>s' :: nat conc_state.
+     csteps example2 chan01 example_tp example_msg example_s0
+       [COwnerWrite 0x8000, COther 20, COwnerCommit,
+        CRecvStart, CRecvCopy 0x8000, CRecvCommit] s'
+     \<and> asteps example2 chan01 example_tp example_msg
+         (abs_mem chan01 example_s0) (cs_xm example_s0)
+         [AOther 20, ASend, AAck] (abs_mem chan01 s') (cs_xm s')"
+  using example_simulated_run by blast+
 
 end
