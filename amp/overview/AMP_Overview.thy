@@ -33,7 +33,7 @@ imports
   "AMP_Channel_C.AMP_Channel_C"    (* pulls in AMP_Channel_R, AMP_Channel_A, AMP_Spatial, AMP_Model *)
   "AMP_Channel_AC.AMP_Channel_AC"  (* the authority-graph layer, a sibling branch off AMP_Channel_A *)
   "AMP_Message.AMP_Message"        (* message content: integrity and confidentiality of VALUES *)
-  "AMP_Thread.AMP_Thread"          (* thread ownership: discharges sender_quiescent, trading it for A-THR *)
+  "AMP_Thread.AMP_Thread"          (* thread ownership: narrows buffer authority to one thread per endpoint *)
   "AMP_Concurrency.AMP_Concurrency" (* the interleaved model, and its refinement to the atomic protocol *)
 begin
 
@@ -54,8 +54,8 @@ begin
                           PermNone. A function of bp alone.
      changed_frames m m'  the frames whose contents differ between two memories.
      amp_step c m m' bp   core c takes a kernel step, writing only frames it
-                          owns. See section 4 — this is an assumption standing
-                          in for seL4's integrity theorem, not a free fact.
+                          owns. See section 4.1(b) — an assumption standing in
+                          for seL4's integrity theorem, not a free fact.
      xchan_send,          the channel protocol: send requires the channel idle
      xchan_recv_ack       and leaves it send-pending; recv/ack requires it
                           send-pending and leaves it idle.
@@ -69,12 +69,12 @@ begin
                           on every frame c holds any access to, None
                           elsewhere. Two memories giving c the same
                           observation are indistinguishable to it.
-     sender_quiescent     a channel's declared sender issues no further write
-                          to its own buffer while a message sits unread. As
-                          of REQ-MSG-8 below this is no longer an assumption
-                          about arbitrary application code — it is DISCHARGED
-                          by thread ownership (next entries), at the cost of
-                          one narrower, architectural assumption, A-THR.
+     quiescent_step       one step of SOME core, taken while ch sits
+                          send-pending. Its reflexive-transitive closure is how
+                          REQ-MSG-8 says "any amount of unrelated activity may
+                          run while the message waits": arbitrary cores taking
+                          arbitrary permission-respecting steps, constrained
+                          only by the channel remaining pending throughout.
      thread_id, tp        a thread (thread_id, a bare identifier) and a
                           thread_partition tp assigning each modelled thread
                           to one core (tp_core) and naming, per declared
@@ -91,10 +91,10 @@ begin
                           actually taken by some thread running on that core
                           whose own thread-level authority already accounts
                           for it. Not a claim about arbitrary application
-                          code (unlike the retired sender_quiescent) — an
-                          architectural fact about seL4's own subject-indexed
-                          `integrity` theorem, not yet discharged against it.
-                          See REQ-MSG-8 and section 4(c).
+                          code, but an architectural fact about seL4's own
+                          subject-indexed `integrity` theorem — one not yet
+                          discharged against it.
+                          See REQ-MSG-8 and section 4.1(c).
      cstep, csteps        one step, and one finite TRACE, of the system as it
                           actually runs: the two kernels' buffer copies
                           happening one frame at a time, with any other
@@ -120,7 +120,7 @@ begin
                           its message is acknowledged, with no timeout, so a
                           receiver that never acknowledges wedges it forever.
                           Not an assumption — a known-false property, disclosed
-                          rather than assumed away. See section 4(b). *)
+                          rather than assumed away. See section 4.2(e). *)
 
 
 section \<open>1. Isolation — cores do not share resources except through declared channels\<close>
@@ -369,20 +369,15 @@ theorem recv_ack_affects_only_its_own_channel:
    its VALUE is; this is the first result about values. Send a message msg
    on ch; let any amount of unrelated kernel activity run while it sits
    pending; then recv/ack it. The value read back is bit-for-bit the value
-   sent. Earlier this theorem needed `sender_quiescent` — an assumption about
-   arbitrary, UNVERIFIED APPLICATION code (that the sender itself issues no
-   further write to its own buffer while pending). That assumption is GONE.
-   In its place is `thread_attribution` (A-THR): every core-level write is
-   actually taken by some THREAD running on that core, whose own thread-level
-   authority already accounts for it — combined with thread ownership
-   narrowing the buffer's write authority from the whole core down to one
-   declared owning thread, which is blocked (by construction) for exactly as
-   long as the channel sits pending. This is a strictly better hypothesis:
-   A-THR is one architectural fact about seL4's own subject-indexed
-   `integrity` theorem, not yet re-derived from it here, rather than a claim
-   about what arbitrary application code does or does not do — but it is
-   still a real, undischarged assumption, and this theorem is still
-   conditional on it, not unconditional; see section 4(c). The parenthetical
+   sent. What makes that believable is thread ownership: the buffer's write
+   authority belongs not to the whole sending core but to ONE declared owning
+   thread, and that thread is blocked, by construction, for exactly as long as
+   the channel sits pending — so the only party permitted to disturb the
+   message cannot be running. Carrying that argument from threads down to
+   actual writes is what the `attribution` hypothesis (A-THR) does. It is an
+   architectural assumption, not a claim about application code, but it IS
+   undischarged: this theorem is conditional on it, not unconditional. Section
+   4.1(c) states its status and what breaks if it fails. The parenthetical
    half remains unconditional and worth isolating: no core OTHER than the
    sender can ever alter the message in flight, regardless of any hypothesis
    here — that part follows from ISO-3/ISO-4 alone. *)
@@ -422,7 +417,8 @@ qed
    storage-channel confidentiality half of message security — the first
    result in this file that is a genuine claim about VALUES rather than
    permissions, and the one that needed message content in the model before
-   it could even be stated (see 4(c), the gap this closes). *)
+   it could even be stated. Section 4.2(f) records the confidentiality
+   claim this does NOT make. *)
 theorem no_core_outside_the_channel_learns_anything_from_a_send:
   assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
       and send: "xchan_send_msg ch msg m m' xm xm'"
@@ -468,7 +464,8 @@ theorem the_acknowledgement_carries_no_message_content:
    invalidated by whatever the sender does next. That is why the channel copies
    rather than sharing a pointer: a zero-copy receiver could read the frame at
    any time, including after the acknowledgement, and no kernel-side property
-   could bound that. See section 4(a) for the one thing this does NOT say. *)
+   could bound that. See section 4.3(i) for the one thing this does NOT
+   say. *)
 theorem the_receiving_application_holds_the_message_that_was_sent:
   assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
       and init: "conc_init ch s"
@@ -570,7 +567,8 @@ qed
    machinery, for one reason: it is a claim about the running system. An
    application developer who learns that the guarantee list describes only a
    serialised idealisation of the kernel would rightly change their design.
-   See section 4(a) for the three things this does not extend to. *)
+   See sections 4.1(a), 4.3(i) and 4.3(j) for the three things this does
+   not extend to. *)
 theorem the_guarantees_survive_concurrent_execution:
   assumes wf: "amp_partition_wf bp" and ch: "ch \<in> ap_channels bp"
       and nemp: "ch_buffer ch \<noteq> {}"
@@ -588,165 +586,206 @@ section \<open>4. What is NOT established\<close>
 (* Every requirement above is conditional, and the conditions matter. Read this
    section as part of the guarantee, not as a caveat appended to it.
 
-   (a) CONCURRENCY IS COVERED; ITS REMAINING GAPS ARE THESE FOUR, AND THEY ARE
-       NOT "no concurrency". This entry used to read "NO CONCURRENCY —
-       everything above concerns a single step considered in isolation". That
-       is no longer the situation: DUR-4 shows any interleaved execution of the
-       real system performs a run of the atomic protocol, and MSG-11 shows the
-       receiving application ends up holding the message under any interleaving
-       whatsoever. What remains is smaller and more specific, and each item
-       should be read on its own rather than as a residue of the old gap.
+   It is arranged by what you would DO about each limit, because that differs
+   sharply:
 
-       (i) FIDELITY OF THE MODEL TO REAL HARDWARE IS ASSUMED, NOT PROVED, AND
-           THIS IS THE LARGEST OF THE FOUR. The interleaving results are about
-           a formal model in which memory operations take effect in the order
-           the trace gives them. Three assumptions carry that model to a real
-           RISC-V multicore: A-MEM (correctly-fenced RVWMO accesses behave
-           sequentially consistently — a hardware fact, trusted the way seL4
-           already trusts its machine model), A-COH (the shared buffer is
-           cache-coherent across the U54 harts), and A-BIN (the compiler does
-           not reorder the fences out — the same unproven binary-level gap
-           every result in this file inherits). None appears as a hypothesis of
-           any theorem above, because they justify the RELATIONSHIP between the
-           model and the hardware rather than any step inside a proof. Related
-           and separately unproved: that the shipped code actually EMITS the
-           required fences around each copy loop. Read together, these mean the
-           concurrency results say "given that real execution is faithfully
-           represented by some trace of this model, the protocol is correct" —
-           a real and useful statement, and not an unconditional one.
+     4.1  ASSUMPTIONS THE GUARANTEES REST ON — things that must be true of the
+          world and are not proved here. If one is false the results above are
+          simply void, so each entry names its failure mode. Nothing you write
+          on top can compensate.
+     4.2  CLAIMS THE DESIGN DOES NOT MAKE — consequences of what was BUILT, not
+          of what was left unproved. Closing one needs a different design, or a
+          different development entirely; more verification will not do it.
+     4.3  PROVED LESS THAN THE HEADING SUGGESTS — open proof work. The
+          guarantee holds but is narrower than its name, and each entry says
+          exactly how.
 
-       (ii) A-THR IS CONSUMED HERE TOO, NOT DISCHARGED. Every other thread's
-           step in the interleaved model is attributed to an explicitly named
-           thread by construction. That is not a way of avoiding A-THR; it IS
-           A-THR's content ("every core-level permission-respecting write is
-           actually taken by some thread"), built into the shape of the model
-           instead of stated as a hypothesis and invoked. Do not read the
-           concurrency work as having retired it — see (c).
+   THE ASSUMPTIONS IN ONE PLACE, so that "what must be true for any of this to
+   hold?" is answerable without reading the rest of the section:
 
-       (iii) ONE CHANNEL PER EXECUTION. The interleaved model covers one
-           channel's protocol, with arbitrary other-thread activity around it.
-           Multiple channels' protocols genuinely racing is not modelled;
-           MSG-7 (channels do not interfere) is the reason that is believed
-           harmless, and it is an argument rather than a proof of this
-           particular composition.
+     A-HW      the boot loader establishes the declared partition        4.1(d)
+     A-MEM     correctly-fenced RVWMO accesses behave sequentially
+               consistently                                             4.1(a)
+     A-COH     the channel buffer is cache-coherent across U54 harts     4.1(a)
+     A-BIN     the compiler preserves fence ordering into the binary     4.1(a)
+     A-THR     every permission-respecting write is taken by some thread
+               whose own authority already accounts for it              4.1(c)
+     A-IPI     inter-processor interrupts are eventually delivered       4.2(e)
+     amp_step  a core's kernel step writes only frames that core owns    4.1(b)
 
-       (iv) INTEGRITY IS PROVED; FRESHNESS IS NOT. The message content is a
-           fixed parameter of the interleaved model, so the repeated round
-           trips DUR-4 covers all carry the SAME message. Every single round
-           trip is therefore fully covered — MSG-11 holds for every message
-           value, under every interleaving — but one specific fault is
-           invisible to the model as it stands: a receiver delivering the
-           PREVIOUS message's bytes instead of the current one's would satisfy
-           every theorem above, because with one fixed message value the two
-           are the same bytes. So "no torn or corrupt value is ever delivered"
-           is established; "the value delivered is the one from the send being
-           acknowledged" is not. Closing this means stating integrity against
-           the buffer snapshot each send publishes rather than against a fixed
-           parameter, which is a change to the integrity invariant rather than
-           a widened quantifier.
+   A-COH, A-MEM and A-IPI are NEW relative to single-core seL4. This system is
+   therefore not "as trustworthy as" the single-core kernel; it is trustworthy
+   MODULO three additional hardware and toolchain assumptions, and any safety
+   case built on it has to say so. One further property, A-AVL, is not assumed
+   at all — it is known to be FALSE and accepted by design; see 4.2(e). *)
 
-       The isolation results (section 1) do not depend on ANY of this. They are
-       properties of a static configuration enforced per-access by each hart's
-       own MMU, so no interleaving can break them.
 
-   (b) NO LIVENESS, AND AVAILABILITY IS KNOWN-BROKEN BY DESIGN (A-AVL). Nothing
-       above says a message is ever delivered, that a receiver ever runs, that a
-       sender ever gets its channel back, or that any operation terminates.
-       "Every RECEIVED message is acknowledged" (MSG-4) is proved; "every SENT
-       message is eventually received" is not, and cannot be without a model of
-       scheduling and progress that this development does not have.
+subsection \<open>4.1 Assumptions the guarantees rest on\<close>
 
-       Beyond the ordinary absence of liveness there is one specific,
-       DELIBERATE design decision that must not be discovered the hard way. A
-       sender blocks until its message is acknowledged, and there is NO TIMEOUT
-       — mirroring seL4's own `seL4_Send`, which likewise blocks indefinitely.
-       A receiver that never acknowledges — crashed, malicious, or merely slow
-       — therefore wedges the sending thread permanently. This is a real
-       receiver-to-sender interference channel and a denial-of-service vector
-       against the sender, and it is NOT an assumption: it is a property known
-       to be false, accepted as the price of a protocol whose safety is
-       provable, and named A-AVL so that nobody has to infer it. Read MSG-10's
-       "bounded backward flow" with this in mind: the acknowledgement carries
-       one bit of DATA, but the sender's PROGRESS is entirely at the receiver's
-       discretion. Do not place a channel's send side on a core whose
-       availability matters unless you control the receiver. A wait-free
-       channel that removes this is designed but not built.
+(* (a) MODEL-TO-HARDWARE FIDELITY IS ASSUMED, NOT PROVED. THIS IS THE LARGEST
+       GAP IN THIS FILE. Every result above concerns a formal model in which
+       memory operations take effect in the order the model gives them. Four
+       things carry that model to a real RISC-V multicore, and none is proved
+       here:
 
-   (c) MESSAGE CONTENT'S REMAINING GAP IS NARROWER STILL: CONFIDENTIALITY IS
-       UNCONDITIONAL; INTEGRITY IS CONDITIONAL ON ONE NAMED ARCHITECTURAL
-       ASSUMPTION, NO LONGER ON A CLAIM ABOUT APPLICATION CODE. Earlier this
-       file had no message-VALUE result at all — only WHERE a message lands
-       and WHO can reach it (MSG-1, MSG-2). That gap split in two, and each
-       half has since narrowed further. The confidentiality half is CLOSED,
-       outright: MSG-9 says no core outside a channel's two endpoints learns
-       anything from a send, for any message value, with no extra hypothesis
-       — it costs nothing beyond ISO-4, because a core with no mapping to the
-       buffer has nothing to observe a changing value through. The integrity
-       half, MSG-8, is ESTABLISHED BUT STILL CONDITIONAL — its hypothesis has
-       changed kind, not disappeared. It used to rest on `sender_quiescent`:
-       a genuine, unproven claim about the SENDER'S OWN APPLICATION CODE (that
-       it issues no further write to its own buffer while a message sits
-       pending) — needed because the sender retains PermRW on the buffer for
-       the system's whole lifetime (ISO-5 is static), so nothing stopped it
-       rewriting a message it had already marked pending, and nothing about
-       arbitrary application code was modelled here to rule that out. Thread
-       ownership (a later, separate development) DISCHARGES that claim
-       outright, by narrowing the buffer's write authority from the whole
-       sending core down to one declared owning thread, and observing that a
-       sender blocked awaiting its own acknowledgement cannot be the thread
-       issuing a conflicting write. `sender_quiescent` is consequently no
-       longer named in MSG-8's hypotheses at all. What replaces it is
-       `thread_attribution` (A-THR): every core-level permission-respecting
-       write is actually taken by SOME thread running on that core, in a way
-       thread ownership's own bookkeeping already accounts for. This is a
-       strictly better hypothesis to carry — A-THR is one architectural fact
-       about seL4's own subject-indexed `integrity` theorem (that a kernel
-       step is always taken on behalf of one specific authorised subject),
-       not a claim about what arbitrary, unverified application code chooses
-       to do — but it is not yet re-derived from that real theorem here, so
-       MSG-8 remains a CONDITIONAL guarantee, not an outright one, and must
-       not be read as such. Separately, MSG-10 records that the
-       acknowledgement is a real, bounded backward flow (one status bit per
-       round trip, no content) that any FUTURE confidentiality claim between
-       the two endpoints themselves — something this file does not attempt —
-       would have to account for rather than rule out. Serialisation,
-       framing, and payload encoding remain outside this development
-       entirely and always will be.
+         A-MEM  correctly-fenced RVWMO accesses behave sequentially
+                consistently — a hardware fact, trusted the way seL4 already
+                trusts its machine model;
+         A-COH  the shared buffer is cache-coherent across the U54 harts;
+         A-BIN  the compiler does not reorder or delete the fences on the way
+                to the binary — the same unproven binary-level gap every
+                result in this file inherits;
+         and, separately unproved, that the shipped code actually EMITS the
+                required fences around each copy loop.
 
-   (d) THE PER-CORE STEP RELATION IS AN ASSUMPTION. `amp_step` — "a core's
+       None of these appears as a hypothesis of any theorem above, because they
+       justify the RELATIONSHIP between the model and the hardware rather than
+       any step inside a proof — which is precisely why they have to be listed
+       here instead. Read together they mean: GIVEN that real execution is
+       faithfully represented by some trace of this model, the protocol is
+       correct. That is a real and useful statement, and not an unconditional
+       one. If false: a receiver can observe a stale or partially written
+       buffer, and MSG-8 and MSG-11 then say nothing about what it holds. A
+       missing or compiler-reordered fence is a bug that no proof in this file
+       will catch; the defences against it are keeping the fenced sequence tiny
+       and reviewing the compiled send/acknowledge path by hand.
+
+   (b) THE PER-CORE STEP RELATION IS AN ASSUMPTION. `amp_step` — "a core's
        kernel step writes only frames that core owns" — is the abstraction of
        seL4's already-proved `integrity` theorem (proof/access-control/
-       Access.thy, `integrity_mem`), but it has NOT been discharged against that
-       theorem here. Doing so requires relating a per-core PAS to the AMP
-       partition, and is deferred integration work. Until then, ISO-2 and
-       everything downstream of it rest on that abstraction being faithful.
+       Access.thy, `integrity_mem`), but it has NOT been discharged against
+       that theorem here. Doing so requires relating a per-core PAS to the AMP
+       partition, and is deferred integration work. If false: ISO-2, and
+       everything downstream of it, lose their basis — which is nearly
+       everything in this file.
 
-   (e) THE BOOT CONFIGURATION IS ASSUMED, NOT VERIFIED. `amp_partition_wf` is a
-       hypothesis of nearly every result above. Nothing here proves that the
-       PolarFire boot loader actually installs the page tables the configuration
-       describes, nor that the hardware honours them. That is assumption A-HW.
+   (c) THREAD ATTRIBUTION IS ASSUMED (A-THR). Every core-level,
+       permission-respecting write is actually taken by SOME thread running on
+       that core, in a way thread ownership's own bookkeeping already accounts
+       for. MSG-8's integrity result rests on this, and the interleaved model
+       consumes it a second time: every other-thread step there is attributed
+       to an explicitly named thread BY CONSTRUCTION, which is not a way of
+       avoiding A-THR but is A-THR's content built into the shape of the model.
+       The concurrency work therefore does not retire it.
+
+       It is a good assumption to be left holding — an architectural fact about
+       seL4's own subject-indexed `integrity` theorem (a kernel step is always
+       taken on behalf of one specific authorised subject), rather than a claim
+       about what arbitrary, unverified application code chooses to do. It
+       replaced a strictly worse hypothesis that WAS such a claim — that the
+       sender's own application code issues no further write while a message
+       sits pending. But A-THR has not been re-derived from that real theorem
+       here, so MSG-8 is a CONDITIONAL guarantee and must not be read as
+       anything else. If false:
+       thread-granular ownership proves nothing about the writes that actually
+       occur, and a receiver may read a torn message.
+
+       Note the asymmetry — only INTEGRITY is conditional on this.
+       Confidentiality (MSG-9) carries no assumption beyond ISO-4.
+
+   (d) THE BOOT CONFIGURATION IS ASSUMED, NOT VERIFIED (A-HW).
+       `amp_partition_wf` is a hypothesis of nearly every result above. Nothing
+       here proves that the PolarFire boot loader actually installs the page
+       tables the configuration describes, nor that the hardware honours them.
        A configuration that is not well-formed gets no guarantees at all, and
-       section 5's witness only shows that well-formed configurations exist —
-       not that yours is one. Checking `amp_partition_wf` for a real deployment
-       configuration is a concrete, cheap, and currently unperformed step.
+       section 5's witness only shows that well-formed configurations EXIST —
+       not that yours is one. Checking `amp_partition_wf` against a real
+       deployment configuration is a concrete, cheap, and currently unperformed
+       step. If false: cores start with overlapping ownership, and isolation
+       fails at the root. *)
 
-   (f) THE C CODE IS NOT THE KERNEL'S. The AMP_Channel_C session checks two
+
+subsection \<open>4.2 Claims the design does not make\<close>
+
+(* (e) NO LIVENESS, AND AVAILABILITY IS KNOWN-BROKEN BY DESIGN (A-AVL).
+       Nothing above says a message is ever delivered, that a receiver ever
+       runs, that a sender ever gets its channel back, or that any operation
+       terminates. "Every RECEIVED message is acknowledged" (MSG-4) is proved;
+       "every SENT message is eventually received" is not, and cannot be
+       without a model of scheduling and progress that this development does
+       not have.
+
+       Beyond that ordinary absence there is one specific, DELIBERATE decision
+       that must not be discovered the hard way. A sender blocks until its
+       message is acknowledged, and there is NO TIMEOUT — mirroring seL4's own
+       `seL4_Send`, which likewise blocks indefinitely. A receiver that never
+       acknowledges — crashed, malicious, or merely slow — therefore wedges the
+       sending thread permanently. This is a real receiver-to-sender
+       interference channel and a denial-of-service vector against the sender.
+       It is NOT an assumption: it is a property known to be FALSE, accepted as
+       the price of a protocol whose safety is provable, and named A-AVL so
+       that nobody has to infer it. Read MSG-10's "bounded backward flow" with
+       this in mind — the acknowledgement carries one bit of DATA, but the
+       sender's PROGRESS is entirely at the receiver's discretion. Do not place
+       a channel's send side on a core whose availability matters unless you
+       also control the receiver. Removing this needs a different channel, not
+       a further proof about this one; a wait-free design that does remove it
+       exists on paper and is not built.
+
+       A-IPI (inter-processor interrupts are eventually delivered) is filed
+       here rather than in 4.1 for the same reason: its only failure mode is
+       that a sender blocks forever, which is the availability property already
+       conceded above. It costs nothing beyond what A-AVL already concedes.
+
+   (f) NO CONFIDENTIALITY CLAIM BETWEEN THE TWO ENDPOINTS THEMSELVES. MSG-9
+       covers cores OUTSIDE the channel, and covers them unconditionally. It
+       says nothing about what a channel's own sender and receiver may learn
+       about each other, and this file does not attempt such a claim. MSG-10
+       records the obstacle any future attempt would have to account for rather
+       than rule out: the acknowledgement is a genuine backward flow of one
+       status bit per round trip.
+
+   (g) NO TIMING OR SIDE-CHANNEL CLAIM. ISO-4, MSG-2 and MSG-9 rule out a third
+       core reading a message, or learning its VALUE through the storage
+       channel a buffer mapping would provide. None of them says anything about
+       timing channels, cache-based side channels, shared-bus contention, or
+       any other non-architectural flow — MSG-9's noninterference result is a
+       storage-channel claim only, matching the scope single-core InfoFlow
+       already commits to. Cross-core timing-channel confidentiality is out of
+       scope permanently, not deferred.
+
+   (h) NO SERIALISATION, FRAMING, OR PAYLOAD ENCODING. A message here is a
+       function from buffer frames to values. Turning application data into one
+       of those, and back, is outside this development entirely and always will
+       be. *)
+
+
+subsection \<open>4.3 Proved less than the heading suggests\<close>
+
+(* (i) INTEGRITY IS PROVED; FRESHNESS IS NOT. The message content is a fixed
+       parameter of the interleaved model, so the repeated round trips DUR-4
+       covers all carry the SAME message. Every individual round trip is fully
+       covered — MSG-11 holds for every message value, under every interleaving
+       — but one specific fault is invisible to the model as it stands: a
+       receiver delivering the PREVIOUS message's bytes instead of the current
+       one's would satisfy every theorem above, because with one fixed message
+       value the two ARE the same bytes. So "no torn or corrupt value is ever
+       delivered" is established; "the value delivered is the one from the send
+       being acknowledged" is not. Closing this means stating integrity against
+       the buffer snapshot each send publishes rather than against a fixed
+       parameter — a change to the integrity invariant, not a widened
+       quantifier.
+
+   (j) ONE CHANNEL PER EXECUTION. The interleaved model covers one channel's
+       protocol, with arbitrary other-thread activity around it. Two channels'
+       protocols genuinely racing is not modelled. MSG-7 (channels do not
+       interfere) is the reason that is believed harmless, and it is an
+       argument about the abstract operations rather than a proof about this
+       particular composition.
+
+   (k) THE C CODE IS NOT THE KERNEL'S. The AMP_Channel_C session checks two
        hand-written C functions against the design-level operations. That C
-       exists nowhere in the real kernel translation unit; it is not spliced into
-       kernel_all.c and it does not describe what runs on hardware. DUR-2 and
-       DUR-3 above are stated at the DESIGN level, which is a genuine step below
-       the specification but still above the shipped binary. Nothing in this file
-       depends on the C session's results, deliberately.
+       exists nowhere in the real kernel translation unit; it is not spliced
+       into kernel_all.c and it does not describe what runs on hardware. DUR-2
+       and DUR-3 are stated at the DESIGN level, which is a genuine step below
+       the specification but still above the shipped binary. Nothing else in
+       this file depends on the C session's results, deliberately.
 
-   (g) NO TIMING / SIDE-CHANNEL CLAIM. ISO-4, MSG-2, and now MSG-9 rule out a
-       third core reading a message, or learning its VALUE through the
-       storage channel the buffer mapping provides. None of them say anything
-       about timing channels, cache-based side channels, shared-bus
-       contention, or any other non-architectural flow — MSG-9's
-       noninterference result is a storage-channel claim only, matching the
-       scope single-core InfoFlow already commits to. Timing-channel
-       cross-core confidentiality is not established and is out of scope
-       permanently, not merely deferred. *)
+   WHAT SECTION 1 INHERITS, AND WHAT IT DOES NOT. The isolation results depend
+   on none of the interleaving limits — neither (a)'s ordering assumptions nor
+   (i) nor (j) — because they are properties of a STATIC configuration enforced
+   per-access by each hart's own MMU, and no interleaving can break them. They
+   do rest on (b) and (d), as does everything else here. *)
 
 
 section \<open>5. Non-vacuity — the guarantees are not empty\<close>
@@ -793,7 +832,7 @@ theorem a_real_messages_send_is_invisible_to_a_bystander:
    owns chan01's send side on core 0, thread 20 its receive side on core 1),
    so the thread_partition_wf premise thread ownership adds is not an empty
    requirement. (No witness is given, or should be, for the remaining
-   thread_attribution/A-THR hypothesis itself — see section 4(c) and the
+   thread_attribution/A-THR hypothesis itself — see section 4.1(c) and the
    AMP_Thread theory header for why any such witness would be vacuous.) *)
 theorem a_real_thread_ownership_assignment_exists:
   "thread_partition_wf example2 example_tp"
