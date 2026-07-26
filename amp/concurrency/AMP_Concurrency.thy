@@ -78,7 +78,8 @@
  *     the only invariant needing `amp_partition_wf`.
  *
  * `cinv` is their conjunction, `reachable_cinv` lifts it to every reachable
- * state, and the two results worth quoting elsewhere are
+ * state, and `csteps_simulates` is the refinement built on top of them. The
+ * two value-level results worth quoting elsewhere are
  * `buffer_complete_while_pending` (whenever the channel is pending — the only
  * window in which the receiving kernel reads — every buffer frame ALREADY
  * holds the whole sent message, so there is no partial buffer to observe) and
@@ -87,15 +88,32 @@
  * interleaving whatsoever). The latter is what REQ-MSG-11 should be read
  * against.
  *
- * STILL NOT GENERAL, AND NOT CLAIMED TO BE. There is no projection from an
- * arbitrary trace onto a SEQUENCE of abstract protocol steps, so "every trace
- * refines a run of the atomic protocol" is not proved here.
- * `interleaved_round_trip_refines_protocol` exhibits ONE round trip's worth of
- * that projection: it fixes where the two commit steps fall and quantifies
- * over everything between them, which is enough to re-derive
- * `xchan_send_msg` and `xchan_recv_ack` from a genuine trace but is not a
- * forward simulation. Building the simulation relation (and thereby covering
- * repeated round trips) is the remaining Phase 6 work; the plan tracks it.
+ * EVERY TRACE REFINES A RUN OF THE ATOMIC PROTOCOL. `csteps_simulates` is a
+ * forward simulation from this interleaved machine onto the atomic protocol of
+ * Phases 3/5.5. For an ARBITRARY trace — any labels, any order, any number of
+ * round trips — the abstract projection (`abs_mem` together with the status
+ * word) performs the abstract run `atrace ls`, in which `COwnerCommit` becomes
+ * `xchan_send_msg`, `CRecvCommit` becomes `xchan_recv_ack`, a non-owner
+ * thread's step becomes an abstract `amp_step_t` by the same thread, and BOTH
+ * COPY LOOPS STUTTER. The abstract state is a function of the concrete one, so
+ * this is a deterministic forward simulation; the abstract trace is COMPUTED
+ * from the concrete one by `aproj` rather than supplied by hand. That is the
+ * projection an earlier version of this theory named as missing.
+ *
+ * `runs_alternate_send_and_ack` is what the simulation buys beyond a single
+ * round trip: the protocol operations of any trace out of the initial state
+ * strictly alternate, send first. Repeated round trips are covered rather than
+ * excluded, which is the substantive difference from Phases 5.5/5.75.
+ *
+ * WHAT IS STILL NOT GENERAL, PRECISELY. `msg` is a PARAMETER of `cstep`, not
+ * mutable state, so the repeated round trips the simulation covers all carry
+ * the SAME message content. Making the message per-send is a further
+ * generalisation, and it is not free: message integrity would have to be
+ * restated against the snapshot published by the matching commit (`cs_shadow`)
+ * rather than against a fixed parameter, because a receiver's copy of message
+ * n legitimately disagrees with message n+1. That is a deliberate redesign of
+ * `copy_inv` and of `delivered_message_is_intact`, not a widening of a
+ * quantifier, and the plan tracks it as such.
  *
  * D2 (ownership mutex) IS CITED, NOT REPROVED. The one fact this development
  * leans on hardest is Phase 5.75's T1 (`buffer_write_requires_owner`): on a
@@ -340,6 +358,12 @@ subsection \<open>D1 — the control invariant\<close>
      (A0) the owner only ever has stores outstanding into ch's own buffer.
      (A)  if the owner has ANY store outstanding, ch is NOT pending — i.e. a
           part-written buffer only ever exists while the channel is idle.
+     (A1) ch is tracked by the status map at all. Bookkeeping rather than
+          insight, but it is load-bearing: xchan_send's precondition is the
+          POSITIVE "xm ch = Some XIdle", so the simulation's send case needs
+          (A) to rule out XSendPending and (A1) to rule out None. Without it
+          "not pending" would leave an untracked channel as a third
+          possibility and the refinement would not close.
      (B)  if the receiving kernel is mid-copy, ch IS pending — i.e. the only
           window in which the buffer is read is one in which it is complete.
 
@@ -354,6 +378,7 @@ definition conc_inv :: "amp_channel \<Rightarrow> 'v conc_state \<Rightarrow> bo
   "conc_inv ch s \<equiv>
      cs_written s \<subseteq> ch_buffer ch
      \<and> (cs_written s \<noteq> {} \<longrightarrow> cs_xm s ch \<noteq> Some XSendPending)
+     \<and> cs_xm s ch \<noteq> None
      \<and> (cs_recv_pc s = RCopy \<longrightarrow> cs_xm s ch = Some XSendPending)"
 
 (* copy_inv ch msg s: the MESSAGE invariant — what is actually in the shared
@@ -405,11 +430,110 @@ subsection \<open>D1 — the abstract buffer content\<close>
    two differ exactly while the owner's copy loop is part-way through, which
    is the whole reason the abstract protocol can treat a send as atomic: at
    every point where abs_mem's buffer half moves, it moves all at once, to a
-   complete message. This is the projection the eventual forward simulation
-   will be built on, and it is already what makes
-   interleaved_round_trip_refines_protocol's footprint clause true. *)
+   complete message. This is the state half of the simulation relation
+   (csteps_simulates): together with cs_xm it IS the abstract state, so the
+   relation is a FUNCTION of the concrete state rather than a general
+   relation — the strongest and simplest shape a forward simulation can
+   take. *)
 definition abs_mem :: "amp_channel \<Rightarrow> 'v conc_state \<Rightarrow> (obj_ref \<Rightarrow> 'v)" where
   "abs_mem ch s = (\<lambda>f. if f \<in> ch_buffer ch then cs_shadow s f else cs_mem s f)"
+
+subsection \<open>D1 — the abstract machine the interleaving refines\<close>
+
+(* The abstract alphabet: an unrelated thread's step, a whole send, a whole
+   acknowledgement. There is deliberately no abstract counterpart to the copy
+   loops or to the receiver's program counter — those are exactly the detail
+   the abstraction exists to hide, and the simulation below makes them
+   STUTTER. *)
+datatype alabel = AOther thread_id | ASend | AAck
+
+(* astep bp ch tp msg m xm l m' xm': one step of the ATOMIC protocol, over the
+   abstract state (system memory, channel status map). Each rule is an
+   EARLIER PHASE'S relation used verbatim, not a fresh definition — that is
+   the point of the exercise, since a simulation onto a freshly invented
+   abstraction would prove nothing about Phases 3/5.5:
+
+     astep_other — Phase 5.75's amp_step_t, for any thread that is not ch's
+                   declared send-owner (the same side condition cstep_other
+                   carries, so the alphabets line up thread for thread).
+     astep_send  — Phase 5.5's xchan_send_msg: the whole send, atomically,
+                   message content included.
+     astep_ack   — Phase 3's xchan_recv_ack: the whole receive-and-release,
+                   atomically. It changes no memory, which is why m appears
+                   unchanged on both sides.
+
+   The abstract machine has no receive buffer, because the atomic protocol
+   never had one; delivery into the application's own memory is the concrete
+   machine's business and is proved separately
+   (delivered_message_is_intact). *)
+inductive astep ::
+  "amp_partition \<Rightarrow> amp_channel \<Rightarrow> thread_partition \<Rightarrow> (obj_ref \<Rightarrow> 'v)
+     \<Rightarrow> (obj_ref \<Rightarrow> 'v) \<Rightarrow> xchan_map \<Rightarrow> alabel
+     \<Rightarrow> (obj_ref \<Rightarrow> 'v) \<Rightarrow> xchan_map \<Rightarrow> bool"
+  for bp ch tp msg
+where
+  astep_other:
+    "\<lbrakk> t \<noteq> tp_send_owner tp ch; amp_step_t t m m' bp tp \<rbrakk>
+     \<Longrightarrow> astep bp ch tp msg m xm (AOther t) m' xm"
+| astep_send:
+    "xchan_send_msg ch msg m m' xm xm'
+     \<Longrightarrow> astep bp ch tp msg m xm ASend m' xm'"
+| astep_ack:
+    "xchan_recv_ack ch xm xm'
+     \<Longrightarrow> astep bp ch tp msg m xm AAck m xm'"
+
+(* A finite run of the atomic protocol, in exactly the shape csteps has at the
+   concrete level so that the two can be compared trace for trace. *)
+inductive asteps ::
+  "amp_partition \<Rightarrow> amp_channel \<Rightarrow> thread_partition \<Rightarrow> (obj_ref \<Rightarrow> 'v)
+     \<Rightarrow> (obj_ref \<Rightarrow> 'v) \<Rightarrow> xchan_map \<Rightarrow> alabel list
+     \<Rightarrow> (obj_ref \<Rightarrow> 'v) \<Rightarrow> xchan_map \<Rightarrow> bool"
+  for bp ch tp msg
+where
+  asteps_nil: "asteps bp ch tp msg m xm [] m xm"
+| asteps_cons: "\<lbrakk> astep bp ch tp msg m xm l m1 xm1;
+                  asteps bp ch tp msg m1 xm1 ls m' xm' \<rbrakk>
+                \<Longrightarrow> asteps bp ch tp msg m xm (l # ls) m' xm'"
+
+inductive_cases astep_other_E[elim!]: "astep bp ch tp msg m xm (AOther t) m' xm'"
+inductive_cases astep_send_E[elim!]: "astep bp ch tp msg m xm ASend m' xm'"
+inductive_cases astep_ack_E[elim!]: "astep bp ch tp msg m xm AAck m' xm'"
+inductive_cases asteps_nil_E[elim!]: "asteps bp ch tp msg m xm [] m' xm'"
+inductive_cases asteps_cons_E[elim!]: "asteps bp ch tp msg m xm (l # ls) m' xm'"
+
+(* The LABEL half of the simulation: what each concrete transition does to the
+   abstract run. The two commit steps are the linearization points and emit
+   one abstract step each; a non-owner thread's step is visible abstractly
+   because the abstract machine has that thread in its alphabet too; and the
+   two copy loops emit NOTHING — they are the stutter. Reading this function
+   is the shortest way to see what the abstraction throws away. *)
+fun aproj :: "clabel \<Rightarrow> alabel list" where
+  "aproj (COwnerWrite f) = []"
+| "aproj COwnerCommit = [ASend]"
+| "aproj (COther t) = [AOther t]"
+| "aproj CRecvStart = []"
+| "aproj (CRecvCopy f) = []"
+| "aproj CRecvCommit = [AAck]"
+
+(* aproj lifted to whole traces. Note this is a total function on concrete
+   traces: EVERY trace has an abstract projection, which is the difference
+   between a simulation and the round-trip result further down (that one
+   supplies the projection by hand for one trace shape). *)
+definition atrace :: "clabel list \<Rightarrow> alabel list" where
+  "atrace ls = concat (map aproj ls)"
+
+(* alternates st als: the abstract run als is a well-formed sequence of
+   protocol operations when started from channel status st — sends and
+   acknowledgements strictly alternate, beginning with whichever the status
+   allows, and other threads' steps are transparent. This is the shape
+   property that turns "each step refines" into "repeated round trips behave",
+   and it is stated on the ABSTRACT trace because that is where a round trip
+   is a pair of adjacent labels rather than a pair of far-apart events. *)
+fun alternates :: "xchan_status \<Rightarrow> alabel list \<Rightarrow> bool" where
+  "alternates st [] = True"
+| "alternates st (AOther t # ls) = alternates st ls"
+| "alternates st (ASend # ls) = (st = XIdle \<and> alternates XSendPending ls)"
+| "alternates st (AAck # ls) = (st = XSendPending \<and> alternates XIdle ls)"
 
 section \<open>Proof development (internal machinery)\<close>
 
@@ -764,6 +888,219 @@ next
   with csteps_cons.hyps(3)[OF rest] show ?case by simp
 qed
 
+subsection \<open>The simulation, step by step\<close>
+
+(* Abstract traces compose, exactly as concrete ones do (csteps_append). Needed
+   because one concrete step contributes a LIST of abstract steps, so the
+   induction below concatenates rather than conses. *)
+lemma asteps_append:
+  "asteps bp ch tp msg m xm ls m1 xm1 \<Longrightarrow> asteps bp ch tp msg m1 xm1 ls' m' xm'
+   \<Longrightarrow> asteps bp ch tp msg m xm (ls @ ls') m' xm'"
+  by (induct rule: asteps.induct) (auto intro: asteps.intros)
+
+(* STUTTER, CASE ONE. One iteration of the sending kernel's copy loop is
+   invisible abstractly. It stores into a BUFFER frame, and abs_mem reads the
+   ghost shadow rather than real memory there — so the abstract memory does not
+   move, and neither does the status word. This is the formal content of "the
+   send looks atomic": the loop's intermediate states have no abstract image
+   distinct from the state before it started. *)
+lemma cstep_owner_write_stutters:
+  "cstep bp ch tp msg s (COwnerWrite f) s'
+   \<Longrightarrow> abs_mem ch s' = abs_mem ch s \<and> cs_xm s' = cs_xm s"
+  by (auto elim!: cstep_owner_write_E simp: abs_mem_def fun_eq_iff)
+
+(* STUTTER, CASE TWO. The receiving kernel entering its copy loop touches only
+   its own program counter and its own receive buffer, neither of which the
+   abstract machine has. *)
+lemma cstep_recv_start_stutters:
+  "cstep bp ch tp msg s CRecvStart s'
+   \<Longrightarrow> abs_mem ch s' = abs_mem ch s \<and> cs_xm s' = cs_xm s"
+  by (auto elim!: cstep_recv_start_E simp: abs_mem_def)
+
+(* STUTTER, CASE THREE. One iteration of the receiving kernel's copy loop is a
+   pure LOAD as far as shared state is concerned: it writes only into the
+   application's private receive buffer. Abstractly nothing happens at all,
+   which is why the atomic protocol's xchan_recv_ack takes no memory operand.  *)
+lemma cstep_recv_copy_stutters:
+  "cstep bp ch tp msg s (CRecvCopy f) s'
+   \<Longrightarrow> abs_mem ch s' = abs_mem ch s \<and> cs_xm s' = cs_xm s"
+  by (auto elim!: cstep_recv_copy_E simp: abs_mem_def)
+
+(* A non-owner thread's step maps to the SAME thread's step at the abstract
+   level. Two things are worth noticing. First, the abstract step is genuinely
+   permission-respecting, not merely asserted to be: abstract memory moves only
+   where real memory does (the shadow half of abs_mem cannot move at all here),
+   so amp_step_t's frame-by-frame bound is inherited. Second, this case needs
+   NO well-formedness hypothesis and never invokes T1 — abs_mem's buffer half
+   being the ghost shadow makes a non-owner's buffer write abstractly invisible
+   even before D2 rules it out. D2 is still doing its work; it is doing it in
+   copy_inv's preservation, which is where message integrity lives. *)
+lemma cstep_other_astep:
+  assumes step: "cstep bp ch tp msg s (COther t) s'"
+  shows "astep bp ch tp msg (abs_mem ch s) (cs_xm s) (AOther t) (abs_mem ch s') (cs_xm s')"
+proof -
+  from step obtain m' where tne: "t \<noteq> tp_send_owner tp ch"
+                        and astp: "amp_step_t t (cs_mem s) m' bp tp"
+                        and mm': "cs_mem s' = m'" and sh': "cs_shadow s' = cs_shadow s"
+                        and xm': "cs_xm s' = cs_xm s"
+    by (auto elim!: cstep_other_E)
+  have sub: "changed_frames (abs_mem ch s) (abs_mem ch s') \<subseteq> changed_frames (cs_mem s) m'"
+    using mm' sh' by (auto simp: changed_frames_def abs_mem_def split: if_splits)
+  with astp have "amp_step_t t (abs_mem ch s) (abs_mem ch s') bp tp"
+    by (auto simp: amp_step_t_def)
+  from astep_other[OF tne this] xm' show ?thesis by simp
+qed
+
+(* THE SEND'S LINEARIZATION POINT. The status-word store maps to a whole
+   xchan_send_msg. Every clause of the abstract relation comes from somewhere
+   concrete and named:
+
+     xm ch = Some XIdle — from conc_inv. The loop's exit condition makes the
+       outstanding set non-empty (this is where ch_buffer ch \<noteq> {} is needed),
+       clause (A) turns that into "not pending", and clause (A1) rules out
+       "not tracked". Note the hypothesis is discharged, not assumed: nothing
+       here says the trace so far was well-behaved.
+     changed_frames \<subseteq> ch_buffer ch — the commit step changes no real memory at
+       all, and abs_mem reads the shadow only inside the buffer, so the
+       abstract footprint is the buffer.
+     xm' = xm(ch \<mapsto> XSendPending) — literally the step's own effect.
+     the message clause — the exit condition covered the whole buffer and
+       copy_inv (C1) says every covered frame holds msg, so the ghost snapshot
+       taken here IS msg. This is where the whole per-frame copy loop is
+       collapsed into one atomic message-carrying send. *)
+lemma cstep_owner_commit_astep:
+  assumes nemp: "ch_buffer ch \<noteq> {}"
+      and ci: "conc_inv ch s" and cp: "copy_inv ch msg s"
+      and step: "cstep bp ch tp msg s COwnerCommit s'"
+  shows "astep bp ch tp msg (abs_mem ch s) (cs_xm s) ASend (abs_mem ch s') (cs_xm s')"
+proof -
+  from step have covered: "ch_buffer ch \<subseteq> cs_written s"
+    and xm': "cs_xm s' = (cs_xm s)(ch \<mapsto> XSendPending)"
+    and sh': "cs_shadow s' = cs_mem s" and mm': "cs_mem s' = cs_mem s"
+    by (auto elim!: cstep_owner_commit_E)
+  from nemp covered have ne: "cs_written s \<noteq> {}" by auto
+  with ci have npend: "cs_xm s ch \<noteq> Some XSendPending" and some: "cs_xm s ch \<noteq> None"
+    by (auto simp: conc_inv_def)
+  have idle: "cs_xm s ch = Some XIdle"
+  proof (cases "cs_xm s ch")
+    case None with some show ?thesis by simp
+  next
+    case (Some st) with npend show ?thesis by (cases st) auto
+  qed
+  have fp: "changed_frames (abs_mem ch s) (abs_mem ch s') \<subseteq> ch_buffer ch"
+    using mm' by (auto simp: changed_frames_def abs_mem_def split: if_splits)
+  have val: "\<forall>f \<in> ch_buffer ch. abs_mem ch s' f = msg f"
+    using sh' covered cp by (auto simp: abs_mem_def copy_inv_def)
+  have "xchan_send_msg ch msg (abs_mem ch s) (abs_mem ch s') (cs_xm s) (cs_xm s')"
+    unfolding xchan_send_msg_def xchan_send_def using idle fp val xm' by simp
+  then show ?thesis by (rule astep_send)
+qed
+
+(* THE ACKNOWLEDGEMENT'S LINEARIZATION POINT. The receiving kernel's
+   status-word store maps to a whole xchan_recv_ack. Its precondition (ch is
+   pending) is again derived rather than assumed: the step's own guard says the
+   receiving kernel is mid-copy, and conc_inv's clause (B) turns that into
+   pending. Abstract memory does not move, matching xchan_recv_ack's having no
+   memory operand — the values the application keeps are concrete state the
+   abstract protocol deliberately does not model. *)
+lemma cstep_recv_commit_astep:
+  assumes ci: "conc_inv ch s"
+      and step: "cstep bp ch tp msg s CRecvCommit s'"
+  shows "astep bp ch tp msg (abs_mem ch s) (cs_xm s) AAck (abs_mem ch s') (cs_xm s')"
+proof -
+  from step have rc: "cs_recv_pc s = RCopy"
+    and xm': "cs_xm s' = (cs_xm s)(ch \<mapsto> XIdle)"
+    by (auto elim!: cstep_recv_commit_E)
+  from ci rc have pend: "cs_xm s ch = Some XSendPending" by (simp add: conc_inv_def)
+  have mem: "abs_mem ch s' = abs_mem ch s"
+    using step by (auto elim!: cstep_recv_commit_E simp: abs_mem_def)
+  have "xchan_recv_ack ch (cs_xm s) (cs_xm s')"
+    unfolding xchan_recv_ack_def using pend xm' by simp
+  then have "astep bp ch tp msg (abs_mem ch s) (cs_xm s) AAck (abs_mem ch s) (cs_xm s')"
+    by (rule astep_ack)
+  with mem show ?thesis by simp
+qed
+
+(* THE SIMULATION, ONE STEP. Assembled from the six cases above: whatever the
+   concrete machine does, the abstract machine performs exactly aproj of that
+   label and the two stay related. There is no existential here and no choice
+   to make — the abstract state is a FUNCTION of the concrete one (abs_mem
+   together with the status word), so this is a deterministic forward
+   simulation rather than a relational one. *)
+lemma cstep_simulates:
+  assumes nemp: "ch_buffer ch \<noteq> {}"
+      and inv: "cinv ch msg s"
+      and step: "cstep bp ch tp msg s l s'"
+  shows "asteps bp ch tp msg (abs_mem ch s) (cs_xm s) (aproj l) (abs_mem ch s') (cs_xm s')"
+proof -
+  from inv have ci: "conc_inv ch s" and cp: "copy_inv ch msg s"
+    by (simp_all add: cinv_def)
+  show ?thesis using step
+  proof (cases rule: cstep.cases)
+    case (cstep_owner_write f)
+    with step have "cstep bp ch tp msg s (COwnerWrite f) s'" by simp
+    from cstep_owner_write_stutters[OF this] cstep_owner_write
+    show ?thesis by (simp add: asteps_nil)
+  next
+    case cstep_owner_commit
+    with step have "cstep bp ch tp msg s COwnerCommit s'" by simp
+    from cstep_owner_commit_astep[OF nemp ci cp this] cstep_owner_commit
+    show ?thesis by (simp add: asteps.intros)
+  next
+    case (cstep_other t m')
+    with step have "cstep bp ch tp msg s (COther t) s'" by simp
+    from cstep_other_astep[OF this] cstep_other
+    show ?thesis by (simp add: asteps.intros)
+  next
+    case cstep_recv_start
+    with step have "cstep bp ch tp msg s CRecvStart s'" by simp
+    from cstep_recv_start_stutters[OF this] cstep_recv_start
+    show ?thesis by (simp add: asteps_nil)
+  next
+    case (cstep_recv_copy f)
+    with step have "cstep bp ch tp msg s (CRecvCopy f) s'" by simp
+    from cstep_recv_copy_stutters[OF this] cstep_recv_copy
+    show ?thesis by (simp add: asteps_nil)
+  next
+    case cstep_recv_commit
+    with step have "cstep bp ch tp msg s CRecvCommit s'" by simp
+    from cstep_recv_commit_astep[OF ci this] cstep_recv_commit
+    show ?thesis by (simp add: asteps.intros)
+  qed
+qed
+
+subsection \<open>Well-formedness of abstract runs\<close>
+
+(* Purely at the abstract level: any run of the atomic protocol from a state
+   whose channel status is st has alternating sends and acknowledgements. The
+   argument is entirely in the two operations' own preconditions — xchan_send
+   demands idle and leaves pending, xchan_recv_ack demands pending and leaves
+   idle — so this is not a new assumption about the protocol but a reading of
+   Phase 3's definitions along a trace. *)
+lemma asteps_alternates:
+  "asteps bp ch tp msg m xm als m' xm' \<Longrightarrow> xm ch = Some st \<Longrightarrow> alternates st als"
+proof (induct arbitrary: st rule: asteps.induct)
+  case (asteps_nil m xm)
+  then show ?case by simp
+next
+  case (asteps_cons m xm l m1 xm1 ls m' xm')
+  from asteps_cons.hyps(1) show ?case
+  proof (cases rule: astep.cases)
+    case (astep_other t)
+    then show ?thesis using asteps_cons.hyps(3) asteps_cons.prems by simp
+  next
+    case astep_send
+    then have "xm ch = Some XIdle" and "xm1 ch = Some XSendPending"
+      by (auto simp: xchan_send_msg_def xchan_send_def)
+    with astep_send asteps_cons.prems asteps_cons.hyps(3) show ?thesis by simp
+  next
+    case astep_ack
+    then have "xm ch = Some XSendPending" and "xm1 ch = Some XIdle"
+      by (auto simp: xchan_recv_ack_def)
+    with astep_ack asteps_cons.prems asteps_cons.hyps(3) show ?thesis by simp
+  qed
+qed
+
 section \<open>Results\<close>
 
 subsection \<open>D1 — every reachable state satisfies the invariants\<close>
@@ -950,7 +1287,80 @@ proof (intro ballI)
   with v eq show "cs_recv_val s'' f = Some (msg f)" by simp
 qed
 
-subsection \<open>D1 — a genuine interleaved trace refines the atomic protocol\<close>
+subsection \<open>D1 — EVERY trace refines a run of the atomic protocol\<close>
+
+(* THE FORWARD SIMULATION, and the headline result of this phase. Take an
+   ARBITRARY trace of the interleaved machine — any labels, in any order, of
+   any length, containing any number of round trips and any amount of other
+   threads' activity — and the abstract projection of its endpoints is
+   connected by the corresponding run of the ATOMIC protocol of Phases 3/5.5.
+
+   What makes this stronger than everything above it: `ls` is universally
+   quantified with no shape constraint whatsoever, and the abstract trace is
+   not supplied by hand but COMPUTED from the concrete one by aproj. That is
+   the difference between "this interleaving refines the protocol" and "the
+   protocol is correct under interleaving", and it is the gap the previous
+   version of this theory named and did not close.
+
+   The hypotheses are the honest ones: amp_partition_wf and the channel's
+   declaredness are needed because the message invariant's preservation needs
+   D2, and ch_buffer ch \<noteq> {} is needed because a channel with no buffer could
+   commit an empty send at any moment, including one at which the abstract
+   xchan_send's idle precondition does not hold. *)
+theorem csteps_simulates:
+  assumes wf: "amp_partition_wf bp" and chd: "ch \<in> ap_channels bp"
+      and nemp: "ch_buffer ch \<noteq> {}"
+  shows "csteps bp ch tp msg s ls s' \<Longrightarrow> cinv ch msg s
+         \<Longrightarrow> asteps bp ch tp msg (abs_mem ch s) (cs_xm s) (atrace ls)
+                                 (abs_mem ch s') (cs_xm s')"
+proof (induct rule: csteps.induct)
+  case (csteps_nil s)
+  then show ?case by (simp add: atrace_def asteps_nil)
+next
+  case (csteps_cons s l sm ls s'')
+  from cstep_simulates[OF nemp csteps_cons.prems csteps_cons.hyps(1)]
+  have first: "asteps bp ch tp msg (abs_mem ch s) (cs_xm s) (aproj l)
+                                   (abs_mem ch sm) (cs_xm sm)" .
+  from cstep_preserves_cinv[OF wf chd csteps_cons.hyps(1) csteps_cons.prems]
+  have "cinv ch msg sm" .
+  from csteps_cons.hyps(3)[OF this]
+  have "asteps bp ch tp msg (abs_mem ch sm) (cs_xm sm) (atrace ls)
+                            (abs_mem ch s'') (cs_xm s'')" .
+  from asteps_append[OF first this] show ?case by (simp add: atrace_def)
+qed
+
+(* The simulation from the machine's actual starting shape, which is the form
+   to quote: no invariant hypothesis survives, so this says outright that every
+   run of the real interleaved system is a run of the atomic protocol. *)
+corollary every_run_refines_the_atomic_protocol:
+  assumes wf: "amp_partition_wf bp" and chd: "ch \<in> ap_channels bp"
+      and nemp: "ch_buffer ch \<noteq> {}"
+      and init: "conc_init ch s" and run: "csteps bp ch tp msg s ls s'"
+  shows "asteps bp ch tp msg (abs_mem ch s) (cs_xm s) (atrace ls)
+                             (abs_mem ch s') (cs_xm s')"
+  using csteps_simulates[OF wf chd nemp run conc_init_cinv[OF init]] .
+
+(* WHAT THE SIMULATION BUYS BEYOND ONE ROUND TRIP. The protocol operations
+   appearing in any trace out of the initial state strictly alternate, send
+   first: no two sends without an intervening acknowledgement, no
+   acknowledgement without a preceding send, however the copy loops and other
+   threads' steps are interleaved around them. Repeated round trips are
+   therefore covered by this phase, not excluded from it — which is exactly
+   what interleaved_round_trip_refines_protocol below cannot say, since it
+   fixes the trace to contain one of each. *)
+corollary runs_alternate_send_and_ack:
+  assumes wf: "amp_partition_wf bp" and chd: "ch \<in> ap_channels bp"
+      and nemp: "ch_buffer ch \<noteq> {}"
+      and init: "conc_init ch s" and run: "csteps bp ch tp msg s ls s'"
+  shows "alternates XIdle (atrace ls)"
+proof -
+  from init have "cs_xm s ch = Some XIdle" by (simp add: conc_init_def)
+  from asteps_alternates[OF every_run_refines_the_atomic_protocol
+                            [OF wf chd nemp init run] this]
+  show ?thesis .
+qed
+
+subsection \<open>D1 — one round trip, with the delivered values named\<close>
 
 (* The round trip, end to end, against Phase 3/5.5's ATOMIC relations. Read
    the hypotheses as one shape of trace, from the machine's starting state:
@@ -975,15 +1385,16 @@ subsection \<open>D1 — a genuine interleaved trace refines the atomic protocol
    abs_mem is where the "send is atomic" abstraction lives, and this theorem
    is where it is cashed.
 
-   WHAT THIS IS NOT. It fixes where the two commit steps fall, so it exhibits
-   one round trip's projection onto the atomic protocol rather than proving
-   that every trace has one. The general statement is a forward simulation
-   over abs_mem with the two commit steps as its non-stuttering cases — the
-   remaining Phase 6 work. What justifies restricting attention to this shape
-   in the meantime is proved above, not assumed: no_owner_write_while_pending
-   and no_owner_commit_while_pending show the owner has no enabled transition
-   during the pending window, so no other ordering of the protocol's own
-   labels is reachable. *)
+   WHY THIS SURVIVES THE SIMULATION. csteps_simulates now proves the general
+   statement — every trace projects onto a run of the atomic protocol — so
+   this theorem is no longer the strongest refinement result here, and its
+   first two conclusions are an instance of it. It is kept because of the
+   THIRD, which the simulation cannot state: the abstract machine has no
+   receive buffer, so only at this level of detail can one say what the
+   receiving application ends up holding. Read the two together as "the
+   control and footprint behaviour refines the protocol under any
+   interleaving (csteps_simulates), and the values delivered are the values
+   sent (this theorem, and delivered_message_is_intact)". *)
 theorem interleaved_round_trip_refines_protocol:
   fixes msg :: "obj_ref \<Rightarrow> 'v"
   assumes wf: "amp_partition_wf bp" and chd: "ch \<in> ap_channels bp"
@@ -1192,6 +1603,84 @@ proof -
         \<and> (\<forall>f \<in> ch_buffer chan01. cs_recv_val sH f = Some (example_msg f))"
     using r xmD xmH by simp
   then show ?thesis by blast
+qed
+
+subsection \<open>The same run, seen through the simulation\<close>
+
+(* Non-vacuity for the SIMULATION, and the clearest single picture of what it
+   does. The concrete run is six labels: two copy-loop iterations, a genuine
+   other-thread step interleaved between them, and the two commits. Its
+   abstract projection is three: both copy loops have VANISHED, the two commit
+   steps have become a whole xchan_send_msg and a whole xchan_recv_ack, and the
+   interleaved other-thread step has survived as itself, still attributed to
+   thread 20. The first conclusion computes the projection; the second exhibits
+   both runs and the fact that the abstract one is reached by
+   every_run_refines_the_atomic_protocol rather than assembled by hand. *)
+lemma example_simulated_run:
+  shows "atrace [COwnerWrite 0x8000, COther 20, COwnerCommit,
+                 CRecvStart, CRecvCopy 0x8000, CRecvCommit]
+         = [AOther 20, ASend, AAck]"
+    and "\<exists>s' :: nat conc_state.
+           csteps example2 chan01 example_tp example_msg example_s0
+             [COwnerWrite 0x8000, COther 20, COwnerCommit,
+              CRecvStart, CRecvCopy 0x8000, CRecvCommit] s'
+           \<and> asteps example2 chan01 example_tp example_msg
+               (abs_mem chan01 example_s0) (cs_xm example_s0)
+               [AOther 20, ASend, AAck] (abs_mem chan01 s') (cs_xm s')"
+proof -
+  show "atrace [COwnerWrite 0x8000, COther 20, COwnerCommit,
+                CRecvStart, CRecvCopy 0x8000, CRecvCommit]
+        = [AOther 20, ASend, AAck]"
+    by (simp add: atrace_def)
+
+  define sB where "sB = example_s0\<lparr> cs_mem := (cs_mem example_s0)(0x8000 := 42),
+                                    cs_written := {0x8000} \<rparr>"
+  define sC where "sC = sB\<lparr> cs_mem := ((cs_mem example_s0)(0x8000 := 42))(0x3000 := 7) \<rparr>"
+  define sD where "sD = sC\<lparr> cs_xm := (cs_xm sC)(chan01 \<mapsto> XSendPending),
+                            cs_written := {}, cs_shadow := cs_mem sC \<rparr>"
+  define sE where "sE = sD\<lparr> cs_recv_pc := RCopy, cs_recv_val := Map.empty \<rparr>"
+  define sG where "sG = sE\<lparr> cs_recv_val := (cs_recv_val sE)(0x8000 \<mapsto> cs_mem sE 0x8000) \<rparr>"
+  define sH where "sH = sG\<lparr> cs_xm := (cs_xm sG)(chan01 \<mapsto> XIdle), cs_recv_pc := RIdle \<rparr>"
+
+  have wf: "amp_partition_wf example2" by (rule example2_partition_wf)
+  have chd: "chan01 \<in> ap_channels example2" by (simp add: example2_def)
+  have nemp: "ch_buffer chan01 \<noteq> {}" by (simp add: chan01_def)
+
+  have owr: "cstep example2 chan01 example_tp example_msg example_s0 (COwnerWrite 0x8000) sB"
+    using example_owner_write by (simp add: sB_def)
+  have oth: "cstep example2 chan01 example_tp example_msg sB (COther 20) sC"
+    using example_other_step by (simp add: sB_def sC_def)
+  have commit: "cstep example2 chan01 example_tp example_msg sC COwnerCommit sD"
+    unfolding sD_def by (rule cstep_owner_commit) (simp add: sC_def sB_def chan01_def)
+  have pendD: "cs_xm sD chan01 = Some XSendPending" by (simp add: sD_def)
+  have rstart: "cstep example2 chan01 example_tp example_msg sD CRecvStart sE"
+    unfolding sE_def
+    by (rule cstep_recv_start) (simp_all add: sD_def sC_def sB_def example_s0_def pendD)
+  have rcopy: "cstep example2 chan01 example_tp example_msg sE (CRecvCopy 0x8000) sG"
+    unfolding sG_def
+    by (rule cstep_recv_copy) (simp_all add: sE_def chan01_def)
+  have rcommit: "cstep example2 chan01 example_tp example_msg sG CRecvCommit sH"
+    unfolding sH_def
+    by (rule cstep_recv_commit) (simp_all add: sG_def sE_def chan01_def)
+
+  have run: "csteps example2 chan01 example_tp example_msg example_s0
+               [COwnerWrite 0x8000, COther 20, COwnerCommit,
+                CRecvStart, CRecvCopy 0x8000, CRecvCommit] sH"
+    by (rule csteps_cons[OF owr csteps_cons[OF oth csteps_cons[OF commit
+          csteps_cons[OF rstart csteps_cons[OF rcopy csteps_cons[OF rcommit csteps_nil]]]]]])
+  from every_run_refines_the_atomic_protocol[OF wf chd nemp example_conc_init run]
+  have sim: "asteps example2 chan01 example_tp example_msg
+               (abs_mem chan01 example_s0) (cs_xm example_s0)
+               [AOther 20, ASend, AAck] (abs_mem chan01 sH) (cs_xm sH)"
+    by (simp add: atrace_def)
+  show "\<exists>s' :: nat conc_state.
+           csteps example2 chan01 example_tp example_msg example_s0
+             [COwnerWrite 0x8000, COther 20, COwnerCommit,
+              CRecvStart, CRecvCopy 0x8000, CRecvCommit] s'
+           \<and> asteps example2 chan01 example_tp example_msg
+               (abs_mem chan01 example_s0) (cs_xm example_s0)
+               [AOther 20, ASend, AAck] (abs_mem chan01 s') (cs_xm s')"
+    by (rule exI[of _ sH]) (rule conjI[OF run sim])
 qed
 
 end
