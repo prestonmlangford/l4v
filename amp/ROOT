@@ -103,6 +103,19 @@ session AMP_Thread in "thread" = AMP_Message +
   theories
     "AMP_Thread"
 
+(* Phase 6 -- concurrency core (D1-D3): an explicit-state interleaving
+   model (cstep/csteps) over a small control skeleton (the status word, the
+   sender's outstanding-write flag, the receiver's progress), showing by
+   forward simulation that a genuinely interleaved trace -- with an
+   arbitrary amount of other-thread activity interposed anywhere -- still
+   yields a real xchan_send_msg, a real xchan_recv_ack, and message
+   integrity (D1), citing Phase 5.75's ownership result rather than
+   reproving it (D2). Builds on the cached AMP_Thread heap. *)
+session AMP_Concurrency in "concurrency" = AMP_Thread +
+  description \<open>Phase 6: concurrency core -- an interleaved trace with arbitrary other-thread activity refines the atomic send/recv-ack protocol.\<close>
+  theories
+    "AMP_Concurrency"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read
@@ -116,5 +129,6 @@ session AMP_Overview in "overview" = AMP_Channel_C +
     AMP_Channel_AC
     AMP_Message
     AMP_Thread
+    AMP_Concurrency
   theories
     "AMP_Overview"
