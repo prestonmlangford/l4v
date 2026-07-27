@@ -135,6 +135,18 @@ session AMP_Integrity in "integrity" = Access +
   theories
     "AMP_Integrity"
 
+(* Per-core invariant layer -- the second payment on the ledger. States, in the
+   boot partition's own vocabulary, what it means for a kernel state to realise
+   the declared partition (`amp_config`), and proves that any such state
+   satisfies seL4's `pas_refined` for that core's PAS. This is the alternative
+   to l4v's per-configuration route (ExampleSystem.thy, 1148 lines for a
+   two-thread system), and it is available only because the PAS is
+   core-granular. Builds on the cached AMP_Integrity heap. *)
+session AMP_Invariant in "invariant" = AMP_Integrity +
+  description \<open>Per-core invariant: a state realising the declared partition satisfies pas_refined.\<close>
+  theories
+    "AMP_Invariant"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read

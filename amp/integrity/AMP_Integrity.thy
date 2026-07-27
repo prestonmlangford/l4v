@@ -295,13 +295,26 @@ qed
 
 subsection \<open>What the policy does and does not permit\<close>
 
+(* THE structural fact about `amp_policy`: its only cross-label edge carries
+   `Read`, so any other authority is confined to a single label, and that label
+   is always a core's (never `Unowned`, which holds no authority at all). Eight
+   of `policy_wellformed`'s nine conjuncts reduce to this one lemma. *)
+lemma amp_policy_nonread_self:
+  "\<lbrakk> (x, a, y) \<in> amp_policy bp; a \<noteq> Read \<rbrakk> \<Longrightarrow> \<exists>c. x = Core c \<and> y = Core c"
+  by (auto simp: amp_policy_def)
+
+(* A core holds every authority over its own label. The consequent of every
+   `policy_wellformed` conjunct is a self-loop, so this is what closes them. *)
+lemma amp_policy_self: "(Core c, a, Core c) \<in> amp_policy bp"
+  by (auto simp: amp_policy_def)
+
 (* The policy grants Write only within a label. This is the whole content of
    `trm_write` for us: a core's write authority never crosses a label boundary,
    because the only cross-label edges `amp_policy` contains are the receivers'
    Read edges. *)
 lemma amp_policy_write_self:
   "(Core c, Write, l) \<in> amp_policy bp \<Longrightarrow> l = Core c"
-  by (auto simp: amp_policy_def)
+  using amp_policy_nonread_self by fastforce
 
 (* Both permissive integrity rules -- "the address carries the subject's own
    label" and "the subject has Write authority over it" -- give the same
@@ -318,6 +331,28 @@ proof -
 qed
 
 section \<open>Results\<close>
+
+subsection \<open>J1 -- the per-core policy is well formed\<close>
+
+(* The first of `pas_refined`'s six conjuncts, and the only one that holds with
+   no hypotheses at all: no partition well-formedness, no state, nothing. It is
+   also the one that could have refuted this whole design. `policy_wellformed`'s
+   first conjunct forbids the subject from holding `Control` over any label but
+   its own, and `amp_policy` deliberately gives a channel's receiver an authority
+   over its SENDER's label -- if that authority had been anything other than
+   `Read`, a core-granular PAS would have been unusable and
+   `integrity_imp_amp_step` with it.
+ *
+ * Eight of the nine conjuncts have a non-`Read` authority in the antecedent, so
+ * `amp_policy_nonread_self` collapses both endpoints to one core label and the
+ * consequent is then a self-loop (`amp_policy_self`). The remaining conjunct is
+ * the bare self-loop requirement. Note this is where `pasMaySendIrqs = True`
+ * gets paid for: it enables the fourth conjunct, which survives only because
+ * `Notify \<noteq> Read`. *)
+theorem amp_pas_wellformed: "pas_wellformed (amp_pas bp c)"
+  unfolding policy_wellformed_def amp_pas_def
+  by simp (intro conjI allI impI;
+           fastforce dest: amp_policy_nonread_self intro: amp_policy_self)
 
 subsection \<open>I2 -- the PAS agrees with Phase 5's authority graph\<close>
 
