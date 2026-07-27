@@ -116,6 +116,25 @@ session AMP_Concurrency in "concurrency" = AMP_Thread +
   theories
     "AMP_Concurrency"
 
+(* Integrity connection layer -- the first payment on the plan's assumption
+   ledger: `amp_step`, which every phase from 2 onward carries as a hypothesis,
+   is shown to BE seL4's own `integrity` (Access.thy) projected onto frames.
+   Unlike every other AMP session this one is parented on Access rather than on
+   the AMP chain, because it is the only one that needs l4v's access-control
+   development; the AMP theories come in via `sessions`, so no already-green AMP
+   session is rebuilt. Scope is deliberately the bridging lemma only -- the
+   per-core invariant that discharges call_kernel_integrity's preconditions, and
+   the lift to whole ADT_A steps, are separate later items. *)
+session AMP_Integrity in "integrity" = Access +
+  description \<open>Integrity connection: amp_step is seL4's integrity_mem projected onto frames, under a one-label-per-core PAS.\<close>
+  sessions
+    AMP_Model
+    AMP_Spatial
+    AMP_Channel_A
+    AMP_Channel_AC
+  theories
+    "AMP_Integrity"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read
