@@ -35,6 +35,7 @@ imports
   "AMP_Message.AMP_Message"        (* message content: integrity and confidentiality of VALUES *)
   "AMP_Thread.AMP_Thread"          (* thread ownership: narrows buffer authority to one thread per endpoint *)
   "AMP_Concurrency.AMP_Concurrency" (* the interleaved model, and its refinement to the atomic protocol *)
+  "AMP_ADT.AMP_ADT"                (* the ledger layers: amp_step derived from seL4's own integrity theorem *)
 begin
 
 (* THE VOCABULARY, in one place, so the statements below read without lookups.
@@ -53,9 +54,17 @@ begin
      frame_perm bp c f    the access core c holds on frame f: PermRW, PermR, or
                           PermNone. A function of bp alone.
      changed_frames m m'  the frames whose contents differ between two memories.
-     amp_step c m m' bp   core c takes a kernel step, writing only frames it
-                          owns. See section 4.1(b) — an assumption standing in
-                          for seL4's integrity theorem, not a free fact.
+     amp_step c m m' bp   core c takes a step, writing only frames it owns.
+                          Derived from seL4's integrity theorem; see REQ-DUR-5.
+     ADT_A uop            l4v's model of the running seL4 system: a six-clause
+                          automaton (ADT_AI.thy:282) over kernel calls,
+                          user-mode steps and interrupt polls. A "step" below
+                          always means a step of this.
+     amp_gs_inv bp c gs   core c's kernel state realises the declared partition
+                          and satisfies seL4's invs, pas_refined, valid_sched
+                          and schact_is_rct. Assumed at boot (A-BOOT),
+                          preserved by every step.
+     gs_mem gs            system memory, read off an ADT_A state.
      xchan_send,          the channel protocol: send requires the channel idle
      xchan_recv_ack       and leaves it send-pending; recv/ack requires it
                           send-pending and leaves it idle.
@@ -169,17 +178,22 @@ proof -
 qed
 
 (* REQ-ISO-2. A RUNNING CORE CANNOT MODIFY ANOTHER CORE'S PRIVATE MEMORY. When
-   core c takes a kernel step, not one frame of any other core's private memory
+   core c takes a step, not one frame of any other core's private memory
    changes. This is the integrity guarantee in its most directly usable form:
    whatever core c's software does — correct, buggy, or actively hostile — it
-   cannot corrupt another core's private state. *)
+   cannot corrupt another core's private state.
+
+   "Takes a step" means a step of `ADT_A`, l4v's model of the running kernel —
+   see REQ-DUR-5. Conditional on A-BOOT (section 4.1(b)). *)
 theorem core_step_cannot_touch_another_cores_memory:
   assumes wf:    "amp_partition_wf bp"
-      and step:  "amp_step c m m' bp"
+      and inv:   "amp_gs_inv bp c gs"
+      and step:  "(gs, gs') \<in> Step (ADT_A uop) u"
       and other: "ap_cores bp c' = Some r'"
       and neq:   "c \<noteq> c'"
-  shows "changed_frames m m' \<inter> cr_frames r' = {}"
-  using amp_step_preserves_other_private[OF wf step other neq] .
+  shows "changed_frames (gs_mem gs) (gs_mem gs') \<inter> cr_frames r' = {}"
+  using amp_step_preserves_other_private
+          [OF wf conjunct1[OF amp_step_of_ADT_A[OF wf inv step]] other neq] .
 
 (* REQ-ISO-3. A CORE CANNOT EVEN HOLD WRITE ACCESS TO ANOTHER CORE'S PRIVATE
    MEMORY. Stronger, and different in kind, from ISO-2: that one says a step
@@ -580,6 +594,31 @@ theorem the_guarantees_survive_concurrent_execution:
   using every_run_refines_the_atomic_protocol[OF wf ch nemp init run]
         runs_alternate_send_and_ack[OF wf ch nemp init run] by blast+
 
+(* REQ-DUR-5. A CORE'S STEP WRITES ONLY FRAMES IT OWNS. Section 1's isolation
+   results all quantify over a core's steps. This says which executions those
+   are: every way the seL4 kernel can run — a system call, user code executing,
+   an interrupt arriving. The statement is over `ADT_A`, l4v's own model of the
+   running kernel, so "a step" here and a step of the real system are the same
+   thing.
+
+   It is seL4's integrity theorem projected onto frames. The proof composes
+   `call_kernel_integrity` (Syscall_AC.thy:1311) and `do_user_op_respects`
+   (ADT_AC.thy:89) over a per-core PAS. The AMP work supplies the labelling and
+   the projection onto frames and proves nothing about seL4 itself.
+
+   The second conclusion is what extends this from one step to a whole run: the
+   invariant the step required is re-established, so it applies again to the
+   next step, and to every step after that.
+
+   Conditional on A-BOOT (section 4.1(b)). A-THR is a separate assumption at a
+   finer granularity, untouched by this; MSG-8 stays conditional on it. *)
+theorem a_cores_step_writes_only_frames_it_owns:
+  assumes wf:   "amp_partition_wf bp"
+      and inv:  "amp_gs_inv bp c gs"
+      and step: "(gs, gs') \<in> Step (ADT_A uop) u"
+  shows "amp_step c (gs_mem gs) (gs_mem gs') bp \<and> amp_gs_inv bp c gs'"
+  using amp_step_of_ADT_A[OF wf inv step] .
+
 
 section \<open>4. What is NOT established\<close>
 
@@ -604,6 +643,8 @@ section \<open>4. What is NOT established\<close>
    hold?" is answerable without reading the rest of the section:
 
      A-HW      the boot loader establishes the declared partition        4.1(d)
+     A-BOOT    the state it hands each core satisfies that core's
+               per-core invariant, in seL4's own vocabulary              4.1(b)
      A-MEM     correctly-fenced RVWMO accesses behave sequentially
                consistently                                             4.1(a)
      A-COH     the channel buffer is cache-coherent across U54 harts     4.1(a)
@@ -611,7 +652,9 @@ section \<open>4. What is NOT established\<close>
      A-THR     every permission-respecting write is taken by some thread
                whose own authority already accounts for it              4.1(c)
      A-IPI     inter-processor interrupts are eventually delivered       4.2(e)
-     amp_step  a core's kernel step writes only frames that core owns    4.1(b)
+
+   A-BOOT is the only assumption about the kernel's own execution. What a step
+   WRITES is proved (REQ-DUR-5); what the boot loader HANDS OVER is assumed.
 
    A-COH, A-MEM and A-IPI are NEW relative to single-core seL4. This system is
    therefore not "as trustworthy as" the single-core kernel; it is trustworthy
@@ -650,14 +693,31 @@ subsection \<open>4.1 Assumptions the guarantees rest on\<close>
        will catch; the defences against it are keeping the fenced sequence tiny
        and reviewing the compiled send/acknowledge path by hand.
 
-   (b) THE PER-CORE STEP RELATION IS AN ASSUMPTION. `amp_step` — "a core's
-       kernel step writes only frames that core owns" — is the abstraction of
-       seL4's already-proved `integrity` theorem (proof/access-control/
-       Access.thy, `integrity_mem`), but it has NOT been discharged against
-       that theorem here. Doing so requires relating a per-core PAS to the AMP
-       partition, and is deferred integration work. If false: ISO-2, and
-       everything downstream of it, lose their basis — which is nearly
-       everything in this file.
+   (b) THE BOOT STATE IS ASSUMED, IN SEL4'S OWN VOCABULARY (A-BOOT). The boot
+       loader is assumed to hand core c a kernel state satisfying
+       `amp_gs_inv bp c`: core c's kernel state realises the declared partition
+       (`amp_config`) and satisfies seL4's own `invs`, `pas_refined`,
+       `valid_sched` and `schact_is_rct`. It is assumed once, at boot;
+       preservation across every step is proved (REQ-DUR-5).
+
+       `amp_config` is stated over `ap_cores`, `ap_channels`, `cr_frames` and
+       `ch_buffer` — the boot configuration's own vocabulary — so a proposed
+       configuration can be checked against it. The `invs` half is inherited
+       from l4v, where kernel initialisation is axiomatised
+       (`akernel_init_invs`, KernelInit_AI.thy:16, under a header reading
+       "Currently axiomatised").
+
+       Two configuration restrictions come with it, both real constraints on a
+       deployment. The configuration must map 4K pages: a frame capability
+       confers authority over its whole page, so a 2M mapping would require
+       every 4K frame inside it to be owned. And no capability conferring
+       `Control` — Untyped, CNode, Thread, Domain, IRQControl, Zombie — may
+       reach outside the core; in particular no untyped capability may cover a
+       channel buffer.
+
+       No witness is exhibited for it (section 5). If false: ISO-2 and
+       everything downstream lose their basis, which is nearly everything in
+       this file.
 
    (c) THREAD ATTRIBUTION IS ASSUMED (A-THR). Every core-level,
        permission-respecting write is actually taken by SOME thread running on
@@ -671,28 +731,36 @@ subsection \<open>4.1 Assumptions the guarantees rest on\<close>
        It is a good assumption to be left holding — an architectural fact about
        seL4's own subject-indexed `integrity` theorem (a kernel step is always
        taken on behalf of one specific authorised subject), rather than a claim
-       about what arbitrary, unverified application code chooses to do. It
-       replaced a strictly worse hypothesis that WAS such a claim — that the
-       sender's own application code issues no further write while a message
-       sits pending. But A-THR has not been re-derived from that real theorem
-       here, so MSG-8 is a CONDITIONAL guarantee and must not be read as
-       anything else. If false:
-       thread-granular ownership proves nothing about the writes that actually
-       occur, and a receiver may read a torn message.
+       about what arbitrary, unverified application code chooses to do. But it
+       has not been re-derived from that theorem here, so MSG-8 is a CONDITIONAL
+       guarantee and must not be read as anything else. If false: thread-granular
+       ownership proves nothing about the writes that actually occur, and a
+       receiver may read a torn message.
 
        Note the asymmetry — only INTEGRITY is conditional on this.
        Confidentiality (MSG-9) carries no assumption beyond ISO-4.
 
-   (d) THE BOOT CONFIGURATION IS ASSUMED, NOT VERIFIED (A-HW).
-       `amp_partition_wf` is a hypothesis of nearly every result above. Nothing
-       here proves that the PolarFire boot loader actually installs the page
-       tables the configuration describes, nor that the hardware honours them.
-       A configuration that is not well-formed gets no guarantees at all, and
-       section 5's witness only shows that well-formed configurations EXIST —
-       not that yours is one. Checking `amp_partition_wf` against a real
-       deployment configuration is a concrete, cheap, and currently unperformed
-       step. If false: cores start with overlapping ownership, and isolation
-       fails at the root. *)
+   (d) THE CONFIGURATION ITSELF IS ASSUMED, NOT VERIFIED (A-HW).
+       `amp_partition_wf` is a hypothesis of nearly every result above, and
+       nothing here proves it of YOUR configuration: section 5's witness shows
+       only that well-formed configurations exist. Checking `amp_partition_wf`
+       against a real deployment configuration is concrete, cheap, and currently
+       unperformed.
+
+       Two further things are assumed here and are not covered by A-BOOT. That
+       the boot loader installs the mappings the configuration DESCRIBES:
+       A-BOOT constrains where a core's page tables may reach, never that a
+       declared frame is mapped at all, so a core handed no mappings satisfies
+       A-BOOT and does no work. And that the hardware honours those mappings,
+       which is outside every model in this file.
+
+       A-HW is about `bp` and the machine; A-BOOT (4.1(b)) is about the kernel
+       state handed to a core. Neither implies the other: a state can faithfully
+       realise a nonsensical `bp`, and a sane `bp` can be handed to a kernel
+       whose objects sit in another core's frames. Both are needed.
+
+       If false: cores start with overlapping ownership, and isolation fails at
+       the root. *)
 
 
 subsection \<open>4.2 Claims the design does not make\<close>
@@ -860,5 +928,33 @@ theorem a_real_interleaved_execution_performs_a_protocol_run:
          (abs_mem chan01 example_s0) (cs_xm example_s0)
          [AOther 20, ASend, AAck] (abs_mem chan01 s') (cs_xm s')"
   using example_simulated_run by blast+
+
+(* And DUR-5 constrains real memory. "The frames a step changes are among the
+   frames it owns" is trivially true if no step ever changes anything, and
+   trivially true if every frame is owned. Neither holds: a one-byte write into
+   core 0's own private frame is a permitted step and does change a frame; the
+   same write into core 1's private frame is not permitted. *)
+theorem a_real_step_changes_memory_and_a_forbidden_one_is_refused:
+  assumes own:   "underlying_memory (machine_state s) 0x1000 \<noteq> v"
+      and other: "underlying_memory (machine_state s) 0x3000 \<noteq> w"
+  shows "amp_step 0 (mem_proj s) (mem_proj (mem_upd s 0x1000 v)) example2
+         \<and> changed_frames (mem_proj s) (mem_proj (mem_upd s 0x1000 v)) \<noteq> {}"
+    and "\<not> amp_step 0 (mem_proj s) (mem_proj (mem_upd s 0x3000 w)) example2"
+  using example2_amp_step_changes_own_frame[OF own]
+        example2_amp_step_forbids_other_frame[OF other] by blast+
+
+(* WHAT SECTION 5 DOES NOT WITNESS. Every witness above is for a hypothesis of
+   some requirement, except one: there is none for A-BOOT. No concrete kernel
+   state satisfying `amp_gs_inv` is exhibited, so nothing here rules out DUR-5
+   and ISO-2 being conditional on something unsatisfiable.
+
+   The gap is `invs` — seL4's own kernel invariant — not anything the AMP work
+   introduced. l4v exhibits a state satisfying `invs` once, in
+   `Example_Valid_State.thy` (1971 lines, a different labelling), and reaches
+   its initial state through an axiomatised initialisation. The partition-shaped
+   half of A-BOOT is witnessed in AMP_Invariant: core 0 owns the buffer it sends
+   on, core 1 does not, and core 1 has read access to it — the asymmetry that
+   makes the condition satisfiable by a channel-using system rather than only by
+   a silent one. *)
 
 end

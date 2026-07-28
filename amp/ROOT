@@ -17,8 +17,18 @@ chapter "AMP"
  *)
 
 (* Phase 1 -- AMP system model (spec only): the multicore composition of
-   per-core abstract states. Builds on the cached ASpec heap. *)
-session AMP_Model in "model" = ASpec +
+   per-core abstract states.
+
+   Parented on Access rather than on ASpec. That is not because Phase 1 needs
+   l4v's access-control development -- it does not -- but because the ledger
+   layers below (AMP_Integrity onwards) do, and Isabelle gives a session exactly
+   ONE parent heap. With the AMP sessions on ASpec and the ledger sessions on
+   Access, no session could have both, and any session needing both would have
+   had to re-check one whole branch from source on every build: measured, that
+   meant re-checking CParser and AutoCorres inside AMP_Overview every time it
+   was edited. Putting Access at the root instead makes the whole tree one
+   linear spine in which every session keeps its own cached heap. *)
+session AMP_Model in "model" = Access +
   description \<open>Phase 1: AMP system model -- N single-core abstract states plus a static boot partition.\<close>
   theories
     "AMP_Model"
@@ -46,7 +56,7 @@ session AMP_Channel_A in "channel" = AMP_Spatial +
    slice since the channel needs none of Ipc_R's capability-transfer
    machinery. C-level (mirrors Ipc_C) is a separate later session. Builds on
    the cached AMP_Channel_A heap. *)
-session AMP_Channel_R in "channel_r" = AMP_Channel_A +
+session AMP_Channel_R in "channel_r" = AMP_Concurrency +
   description \<open>Phase 4 (R half): design-level channel ops refine the Phase 3 abstract ops (corres).\<close>
   theories
     "AMP_Channel_R"
@@ -119,19 +129,13 @@ session AMP_Concurrency in "concurrency" = AMP_Thread +
 (* Integrity connection layer -- the first payment on the plan's assumption
    ledger: `amp_step`, which every phase from 2 onward carries as a hypothesis,
    is shown to BE seL4's own `integrity` (Access.thy) projected onto frames.
-   Unlike every other AMP session this one is parented on Access rather than on
-   the AMP chain, because it is the only one that needs l4v's access-control
-   development; the AMP theories come in via `sessions`, so no already-green AMP
-   session is rebuilt. Scope is deliberately the bridging lemma only -- the
-   per-core invariant that discharges call_kernel_integrity's preconditions, and
-   the lift to whole ADT_A steps, are separate later items. *)
-session AMP_Integrity in "integrity" = Access +
+   This is the first session that needs l4v's access-control development, which
+   is why Access sits at the root of the whole AMP spine (see AMP_Model above).
+   Scope is deliberately the bridging lemma only; the per-core invariant that
+   discharges call_kernel_integrity's preconditions is AMP_Invariant, and the
+   lift to whole ADT_A steps is AMP_ADT. *)
+session AMP_Integrity in "integrity" = AMP_Channel_C +
   description \<open>Integrity connection: amp_step is seL4's integrity_mem projected onto frames, under a one-label-per-core PAS.\<close>
-  sessions
-    AMP_Model
-    AMP_Spatial
-    AMP_Channel_A
-    AMP_Channel_AC
   theories
     "AMP_Integrity"
 
@@ -147,19 +151,27 @@ session AMP_Invariant in "invariant" = AMP_Integrity +
   theories
     "AMP_Invariant"
 
+(* ADT step layer -- the third and last payment on the ledger for `amp_step`.
+   Lifts the integrity connection from `call_kernel` and `do_user_op` to whole
+   steps of seL4's abstract system `ADT_A`, whose six-clause automaton also
+   covers interrupt polling and three mode changes. `amp_step_of_ADT_A` is what
+   turns `amp_step` from a hypothesis of Phases 2-6 into a conclusion. Kept
+   separate from AMP_Invariant so that editing the ADT lift does not rebuild the
+   expensive `pas_refined` reduction. Builds on the cached AMP_Invariant heap. *)
+session AMP_ADT in "adt" = AMP_Invariant +
+  description \<open>ADT step layer: every ADT_A step of a core is an amp_step of that core.\<close>
+  theories
+    "AMP_ADT"
+
 (* Overview -- cumulative, machine-checked index of every phase's headline
    result: a plain-English paragraph directly beside the exact formal
    statement, re-derived from the real theorem so drift breaks the build. Read
    this file, not any phase's own theory, if you only want to know WHAT has
-   been proved. Updated once per phase (plan section 2.5). Builds on the
-   cached AMP_Channel_C heap (the latest phase), which imports all earlier
-   phases transitively. *)
-session AMP_Overview in "overview" = AMP_Channel_C +
+   been proved. Updated once per phase (plan section 2.5). Builds on the cached
+   AMP_ADT heap, which is the end of the spine and so carries every earlier
+   session transitively -- including, since the restructuring above, both the
+   C-refinement branch and the l4v access-control branch. *)
+session AMP_Overview in "overview" = AMP_ADT +
   description \<open>Cumulative specification index: every phase's headline theorem, restated next to its plain-English meaning and re-derived from the real proof.\<close>
-  sessions
-    AMP_Channel_AC
-    AMP_Message
-    AMP_Thread
-    AMP_Concurrency
   theories
     "AMP_Overview"
