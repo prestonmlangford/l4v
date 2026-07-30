@@ -15,13 +15,15 @@
 #   2. no raw axioms (axiomatization / axioms) anywhere in l4v/amp, unattributed
 #   3. coding standard: every declaration in l4v/amp carries a preceding prose comment
 #
-# This is the single source of truth for those checks. It is invoked by:
-#   - GitHub Actions (.github/workflows/proof-hygiene.yml) on PRs into polarfire
-#   - the local pre-push hook, via the umbrella's check-green.sh
+# This is the single source of truth for those checks. It is invoked by the
+# pre-push hook, via the umbrella's check-green.sh. There is one machine in
+# this project (this devcontainer) and no separate CI server, so this hook is
+# the entire gate; core.hooksPath persists across rebuilds, so it runs on
+# every push. The only way past it is `git push --no-verify`.
 #
 # The heavier checks (build config, generated maxIRQ/irqBits, the Isabelle
 # build) live in the umbrella's check-green.sh because they need the kernel
-# config and the prover; they cannot run in ordinary CI.
+# config and the prover.
 #
 # Usage: check-hygiene.sh
 # Exit:  0 = clean, 1 = a check failed.
