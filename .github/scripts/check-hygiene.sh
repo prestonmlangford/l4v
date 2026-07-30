@@ -6,7 +6,8 @@
 # Isabelle, and no umbrella repo:
 #
 #   1. no cheats  (sorry / oops / quick_and_dirty / skip_proofs) in changed .thy
-#   2. coding standard: added declarations carry a preceding prose comment
+#   2. no raw axioms (axiomatization / axioms) in changed .thy, unattributed
+#   3. coding standard: added declarations carry a preceding prose comment
 #
 # This is the single source of truth for those two checks. It is invoked by:
 #   - GitHub Actions (.github/workflows/proof-hygiene.yml) on PRs into polarfire
@@ -53,7 +54,32 @@ else
   fi
 fi
 
-echo "[2] Coding standard: comments on added declarations"
+echo "[2] No raw axioms in changed theories (vs $BASE)"
+# `axiomatization`/`axioms` assert a fact with no proof obligation at all --
+# the one mechanism that could introduce an assumption CLAUDE.md's ledger
+# never named. Every real AMP assumption (A-BOOT, A-MEM, ...) is stated as an
+# explicit theorem hypothesis instead, so this should never fire; a hit is not
+# auto-failed the way a cheat is, because a hit needs a human to confirm it
+# names an approved, ledgered hardware assumption rather than papering over a
+# gap -- see CLAUDE.md's rule against inventing assumptions.
+if [ -z "$changed" ]; then
+  ok "no changed .thy files"
+else
+  hits=""
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    m=$(grep -nE '(^|[^a-zA-Z_])axiomatization([^a-zA-Z_]|$)|(^|[^a-zA-Z_])axioms([^a-zA-Z_]|$)' "$f" || true)
+    [ -n "$m" ] && hits="$hits\n  $f:\n$(echo "$m" | sed 's/^/    /')"
+  done <<< "$changed"
+  if [ -n "$hits" ]; then
+    bad "raw axiom found -- confirm it is a ledgered, hardware-justified assumption (CLAUDE.md), not an invented one:"
+    printf '%b\n' "$hits"
+  else
+    ok "no raw axioms"
+  fi
+fi
+
+echo "[3] Coding standard: comments on added declarations"
 python3 "$L4V/.github/scripts/check-comments.py" "$BASE" "$L4V" || fail=1
 
 if [ "$fail" -eq 0 ]; then

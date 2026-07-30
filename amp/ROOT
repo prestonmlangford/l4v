@@ -15,3 +15,13 @@ chapter "AMP"
  * already-built prerequisite whose heap is cached, so editing a session's
  * theory rebuilds only that theory, not its dependencies.
  *)
+
+(*
+ * Not AMP proof content -- a merge-gate traceability probe. See the comment
+ * at the top of AMP_Placeholder.thy. Delete this session once real proof
+ * work starts.
+ *)
+session AMP_Placeholder in "placeholder" = Access +
+  theories
+    "AMP_Placeholder"
+    "AMP_Placeholder_Witnesses"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that newly added Isabelle declarations carry a preceding prose comment.
 
-Implements the coding standard in multicore-amp-plan.md section 2: every
+Implements the coding standard in CONTRIBUTING.md section 4.1: every
 definition and lemma we add must be preceded by a plain-English comment that
 explains it completely.
 
