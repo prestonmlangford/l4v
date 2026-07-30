@@ -1,9 +1,10 @@
 # Proof-hygiene gate for the PolarFire AMP fork.
 #
 # Runs the l4v-only, self-contained tier of the merge gate on every pull request
-# into a mainline branch: no cheats (sorry/oops/quick_and_dirty/skip_proofs) in
-# changed theories, and a preceding prose comment on every added declaration
-# (coding standard, multicore-amp-plan.md section 2).
+# into a mainline branch: no cheats (sorry/oops/quick_and_dirty/skip_proofs)
+# anywhere in l4v/amp, and a preceding prose comment on every declaration there
+# (coding standard, CLAUDE.md). Scope is the fixed l4v/amp/ directory, not a
+# diff against the PR base -- see check-hygiene.sh's header for why.
 #
 # This tier is fast (seconds) and needs no kernel build or Isabelle, so it is
 # safe to run in CI. The heavy checks -- build config, generated maxIRQ/irqBits,
@@ -25,12 +26,10 @@ jobs:
   hygiene:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out with full history
+      - name: Check out
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Run hygiene checks against the PR base
+      - name: Run hygiene checks against l4v/amp
         run: |
           chmod +x .github/scripts/check-hygiene.sh
-          .github/scripts/check-hygiene.sh "${{ github.event.pull_request.base.sha }}"
+          .github/scripts/check-hygiene.sh

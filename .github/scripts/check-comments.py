@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Check that newly added Isabelle declarations carry a preceding prose comment.
+"""Check that every Isabelle declaration under a directory carries a preceding prose comment.
 
-Implements the coding standard in CONTRIBUTING.md section 4.1: every
-definition and lemma we add must be preceded by a plain-English comment that
-explains it completely.
+Implements the coding standard in CLAUDE.md / CONTRIBUTING.md: every
+definition and lemma in the AMP body of work must be preceded by a
+plain-English comment that explains it completely.
 
-This only inspects lines ADDED relative to a base ref, so untouched upstream
-seL4 declarations are never flagged. It is a review aid, not a judge of comment
-quality -- it can tell that a comment exists, not that it is complete.
+Scope is a fixed directory (l4v/amp/), not a git diff against a base ref.
+l4v/amp/ IS the entire AMP body of work -- CLAUDE.md forbids touching
+existing l4v proofs at all -- so scanning it whole is exactly as complete as
+the rule requires, and it stays correct regardless of which branch or base
+ref a check happens to run against. It is a review aid, not a judge of
+comment quality -- it can tell that a comment exists, not that it is complete.
 
-Usage: check-comments.py <base-ref> [repo-dir]
-Exit:  0 = every added declaration is commented, 1 = some are not.
+Usage: check-comments.py <dir>
+Exit:  0 = every declaration is commented, 1 = some are not.
 """
 
 import re
-import subprocess
 import sys
+from pathlib import Path
 
 # Isabelle declaration forms that the standard requires a comment on.
 DECL = re.compile(
@@ -23,49 +26,6 @@ DECL = re.compile(
     r"function|record|datatype|inductive|inductive_set|type_synonym|"
     r"locale|instantiation|schematic_goal)\b"
 )
-
-HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
-
-
-def added_lines(base, repo):
-    """Map each changed .thy file to the set of line numbers added vs base.
-
-    `git diff` only ever considers tracked paths, so a brand-new file that
-    hasn't been `git add`-ed yet would otherwise be invisible here and skip
-    the check entirely. Untracked .thy files are unioned in separately, with
-    every line treated as added (the whole file is new).
-    """
-    out = subprocess.run(
-        ["git", "-C", repo, "diff", "--unified=0", "--no-color", base, "--", "*.thy"],
-        capture_output=True, text=True, check=True,
-    ).stdout
-    files, cur, lineno = {}, None, 0
-    for line in out.splitlines():
-        if line.startswith("+++ b/"):
-            cur = line[6:]
-            files.setdefault(cur, set())
-        elif line.startswith("@@"):
-            m = HUNK.match(line)
-            if m:
-                lineno = int(m.group(1))
-        elif line.startswith("+") and not line.startswith("+++") and cur:
-            files[cur].add(lineno)
-            lineno += 1
-
-    untracked = subprocess.run(
-        ["git", "-C", repo, "ls-files", "--others", "--exclude-standard", "--", "*.thy"],
-        capture_output=True, text=True, check=True,
-    ).stdout
-    for path in untracked.splitlines():
-        if not path:
-            continue
-        try:
-            with open(f"{repo}/{path}", encoding="utf-8", errors="replace") as fh:
-                n_lines = len(fh.read().splitlines())
-        except FileNotFoundError:
-            continue
-        files.setdefault(path, set()).update(range(1, n_lines + 1))
-    return files
 
 
 def in_comment_mask(lines):
@@ -117,38 +77,28 @@ def is_commented(lines, idx):
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
-    base = sys.argv[1]
-    repo = sys.argv[2] if len(sys.argv) > 2 else "."
+    root = Path(sys.argv[1])
 
     findings = []
-    for path, added in sorted(added_lines(base, repo).items()):
-        if not added:
-            continue
-        try:
-            with open(f"{repo}/{path}", encoding="utf-8", errors="replace") as fh:
-                lines = fh.read().splitlines()
-        except FileNotFoundError:
-            continue  # deleted in the working tree
+    for path in sorted(root.rglob("*.thy")):
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         mask = in_comment_mask(lines)
-        for n in sorted(added):
-            if n > len(lines):
-                continue
-            text = lines[n - 1]
-            if mask[n - 1]:
+        for i, text in enumerate(lines):
+            if mask[i]:
                 continue  # this "declaration-looking" line is prose inside a comment
-            if DECL.match(text) and not is_commented(lines, n - 1):
-                findings.append((path, n, text.strip()[:70]))
+            if DECL.match(text) and not is_commented(lines, i):
+                findings.append((path, i + 1, text.strip()[:70]))
 
     if not findings:
-        print("  OK: every added declaration has a preceding comment")
+        print("  OK: every declaration has a preceding comment")
         return 0
 
-    print(f"  {len(findings)} added declaration(s) with no preceding comment:\n")
+    print(f"  {len(findings)} declaration(s) with no preceding comment:\n")
     for path, n, text in findings:
         print(f"    {path}:{n}")
         print(f"      {text}")
-    print("\n  Coding standard (plan section 2): each must be preceded by prose")
-    print("  giving its meaning, its assumptions, and the phase/obligation it serves.")
+    print("\n  Coding standard (CLAUDE.md): each must be preceded by prose")
+    print("  giving its meaning, its assumptions, and the assumption it pays, if any.")
     return 1
 
 
