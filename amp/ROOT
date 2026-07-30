@@ -24,3 +24,4 @@ chapter "AMP"
 session AMP_Placeholder in "placeholder" = Access +
   theories
     "AMP_Placeholder"
+    "AMP_Placeholder_Witnesses"

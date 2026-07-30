@@ -31,4 +31,18 @@ section "Results"
 lemma amp_placeholder_pas_wellformed: "pas_wellformed Sys1PAS"
   using Sys1_wellformed .
 
+(*
+ * This restates part of l4v's policy_wellformed definition under a new
+ * name: wellformedness gives an agent every authority over itself, for the
+ * policy's own subject, pasSubject aag. Unlike the ground fact above, this
+ * lemma has a real hypothesis, pas_wellformed aag, over an arbitrary aag. It
+ * exists so this placeholder session can also validate the merge gate's
+ * witness check (scripts/check-witness.sh) on a hypothesis-bearing theorem,
+ * not only a ground one. See AMP_Placeholder_Witnesses.thy for its witness,
+ * pw_amp_placeholder_self_authority.
+ *)
+lemma amp_placeholder_self_authority:
+  "pas_wellformed aag \<Longrightarrow> (pasSubject aag, auth, pasSubject aag) \<in> pasPolicy aag"
+  unfolding policy_wellformed_def by blast
+
 end
