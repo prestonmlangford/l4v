@@ -17,11 +17,21 @@ chapter "AMP"
  *)
 
 (*
- * Not AMP proof content -- a merge-gate traceability probe. See the comment
- * at the top of AMP_Placeholder.thy. Delete this session once real proof
- * work starts.
+ * PLAN.md item 9, UserData case: the abstract-specification half of
+ * transporting call_kernel_integrity to a per-word confinement fact. See
+ * AMP_UserData.thy's own comments for what this does and does not cover --
+ * the C-level transport is separate, still-open work.
  *)
-session AMP_Placeholder in "placeholder" = Access +
+session AMP_UserData in "userdata" = Access +
   theories
-    "AMP_Placeholder"
-    "AMP_Placeholder_Witnesses"
+    "AMP_UserData"
+    "AMP_UserData_Witnesses"
+
+(*
+ * The single place documenting AMP's headline, reader-facing results. See
+ * CLAUDE.md's "Where things are" table.
+ *)
+session AMP_Overview in "overview" = AMP_UserData +
+  theories
+    "AMP_Overview"
+    "AMP_Overview_Witnesses"
