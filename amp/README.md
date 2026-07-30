@@ -1,8 +1,8 @@
 # AMP proof development — fast-iteration harness
 
-This directory holds the sessions for the verified AMP (multicore) work. Each
-phase of [`multicore-amp-plan.md`](../../multicore-amp-plan.md) adds a session
-here. This file explains how to iterate on those proofs quickly.
+This directory holds the sessions for the verified AMP (multicore) work. See
+`../../PLAN.md` for the current work stack; a session gets added here as work
+on it starts. This file explains how to iterate on those proofs quickly.
 
 ## What gets cached
 
@@ -28,18 +28,18 @@ that session then re-checks only *your* theory.
 ```sh
 export L4V_ARCH=RISCV64 L4V_PLAT=polarfire
 cd l4v
-./isabelle/bin/isabelle build -d . -v AMP_Model
+./isabelle/bin/isabelle build -d . -v <YourSession>
 ```
 
-Measured: with the `ASpec` heap present, editing `amp/model/AMP_Model.thy` and
-rebuilding `AMP_Model` re-checks that one theory in **~1 s** (≈10 s including
-process start), *not* the whole abstract spec. The build log shows `ASpec`,
-`ExecSpec`, and the `Lib` sessions listed but not "Running" — they are loaded
-from cache.
+Measured (attempt 1): with the `ASpec` heap present, editing a session's
+top theory and rebuilding it re-checked that one theory in **~1 s** (≈10 s
+including process start), *not* the whole abstract spec. The build log shows
+`ASpec`, `ExecSpec`, and the `Lib` sessions listed but not "Running" — they
+are loaded from cache.
 
-This is why the plan puts each phase in its own session: you get incremental
-rebuilds without any special tooling, as long as your edits stay in the
-top-most theory.
+This is why each unit of work should sit in its own session: you get
+incremental rebuilds without any special tooling, as long as your edits stay
+in the top-most theory.
 
 ## Regime B — the scratch-base trick (when Regime A is not enough)
 
