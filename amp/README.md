@@ -19,6 +19,26 @@ Two properties of that cache to keep in mind:
 - **A snapshot, so it can go stale.** A heap is valid only while nothing *below*
   it changes. Edit a theory and every session that imports it must rebuild.
 
+## Surviving a container rebuild (or a damaged heap store)
+
+`~/.isabelle/heaps` is ephemeral (see above), but everything in it below
+`amp/` is a heap for a session this project can never modify -- l4v itself
+and the Isabelle fork, both pinned by commit in `../../MANIFEST.md`. As long
+as that pin and the build config (`L4V_ARCH=RISCV64 L4V_PLAT=polarfire`)
+don't change, those heaps are valid forever. `scripts/isabelle-heap-cache.sh`
+saves them to `.isabelle-heap-cache/` under the repo root -- on the
+persistent volume, gitignored -- and restores them back into
+`~/.isabelle/heaps` on a fresh container (or after a damaged heap store),
+skipping a from-scratch rebuild of everything up through `CRefine`. It never
+saves or restores a session listed in `amp/ROOT` -- that's this project's own
+work, and always rebuilds normally. See the script's own header for the full
+rationale.
+
+```sh
+./scripts/isabelle-heap-cache.sh save       # after a good, green build
+./scripts/isabelle-heap-cache.sh restore    # on a fresh container
+```
+
 ## Invoking a build
 
 Use `scripts/isabelle-build.sh <SessionName>` (from the repo root), not a raw
