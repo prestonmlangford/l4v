@@ -15,7 +15,7 @@ section "Results"
  * hypotheses are jointly satisfiable, not merely individually plausible.
  * Sys1PAS/s1 (the two-domain example system already checked into l4v)
  * gives a real policy graph and a real state to instantiate them against.
- * Object 0x7 is T1's CNode -- labelled T1, distinct from the calling
+ * Object 0x7 is T1's CNode - labelled T1, distinct from the calling
  * subject UT1, and UT1 has no Write edge to T1 in Sys1AuthGraph (that
  * graph only completes self-loops per label, see complete_AuthGraph_def).
  * Both of s1's TCBs hold NullCap in tcb_ipcframe, so auth_ipc_buffers s1

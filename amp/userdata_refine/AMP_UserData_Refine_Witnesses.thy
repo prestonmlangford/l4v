@@ -14,13 +14,13 @@ section "Results"
 (*
  * Positive witness for call_kernel_user_mem_agrees: its hypotheses are
  * jointly satisfiable, not merely individually plausible. This rests on
- * two things l4v itself has never built without an axiom -- both accepted
+ * two things l4v itself has never built without an axiom - both accepted
  * here as a deliberate, recorded decision (2026-07-31), not invented by
  * AMP. See PLAN.md's "Checked initialization" item, which now points back
  * here, for the follow-up: a genuine, non-axiomatic witness would also
  * discharge both gaps below for good.
  *
- * Gap 1 -- a concrete invs/invs'-satisfying state pair. init_A_st
+ * Gap 1 - a concrete invs/invs'-satisfying state pair. init_A_st
  * (spec/abstract/RISCV64/Init_A.thy) is l4v's own hand-built "dummy initial
  * state", and most of what is needed about it is real, non-axiomatic proof:
  * invs_A (proof/invariant-abstract/RISCV64/ArchKernelInit_AI.thy) and
@@ -37,7 +37,7 @@ section "Results"
  * akernel_init_invs, ckernel_init_invs, ckernel_init_sch_norm,
  * ckernel_init_ctr, ckernel_init_domain_time, init_refinement.
  *
- * Gap 2 -- Init_H \<noteq> {}. Every one of those is phrased "for every element
+ * Gap 2 - Init_H \<noteq> {}. Every one of those is phrased "for every element
  * of Init_H", which holds vacuously if Init_H is empty. Nothing in l4v
  * states or needs Init_H's nonemptiness, so it is asserted here as an
  * explicit extra hypothesis, named plainly rather than folded silently
@@ -46,7 +46,7 @@ section "Results"
  * of the real seL4 boot process but is not, today, a checked l4v fact.
  *
  * Neither gap touches call_kernel_user_mem_agrees itself, which remains
- * free of any such unproven starting point -- only this witness, the
+ * free of any such unproven starting point - only this witness, the
  * demonstration that its hypotheses are not vacuous, depends on them.
  *)
 lemma pw_call_kernel_user_mem_agrees:
@@ -84,7 +84,7 @@ proof -
   (*
    * valid_list_init / valid_sched_init / valid_domain_list_init
    * (proof/refine/RISCV64/Refine.thy) are real, non-axiomatic [simp]
-   * lemmas about init_A_st -- cited directly rather than re-derived from
+   * lemmas about init_A_st - cited directly rather than re-derived from
    * the raw record, which drags in unrelated fields (kheap, arch_state,
    * ...) and leaves the simplifier stuck on valid_domain_list's own
    * unfolding. Only scheduler_action/domain_time need the raw record
@@ -108,7 +108,7 @@ proof -
   have preH: "(invs' and (\<lambda>s. Interrupt \<noteq> Interrupt \<longrightarrow> ct_running' s) and (ct_running' or ct_idle')
                and (\<lambda>s. ksSchedulerAction s = ResumeCurrentThread)) s'"
     using invs'_s' ctr_s' sch_s' by (simp add: pred_conj_def)
-  (* Sequential OF chaining throughout -- see AMP_UserData_Refine.thy's
+  (* Sequential OF chaining throughout - see AMP_UserData_Refine.thy's
      comment on why a single combined OF list is dramatically slower here. *)
   note cud0 = corres_underlyingD[OF kernel_corres[of Interrupt]]
   note cud1 = cud0[OF rel]

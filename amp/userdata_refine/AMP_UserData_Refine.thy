@@ -32,7 +32,7 @@ section "Results"
  * state_relation-related pair of states, provided each state is
  * valid_state. akernel_invs_det_ext (proof/invariant-abstract/AInvs.thy)
  * and ckernel_invs (proof/refine/RISCV64/Refine.thy) say call_kernel and
- * callKernel each preserve their own invariant -- invs and invs' -- which
+ * callKernel each preserve their own invariant - invs and invs' - which
  * is what supplies valid_state at the end state.
  *
  * This is the abstract-to-design-spec half of transporting UserData memory

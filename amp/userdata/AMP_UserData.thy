@@ -26,7 +26,7 @@ section "Results"
  * writer has Write authority to it (trm_write), the word sits in a fixed
  * "globals" exception set (trm_globals), or a thread is legitimately
  * receiving it into an IPC buffer (trm_ipc). Once those four are excluded,
- * only trm_orefl -- unchanged content -- is left. This lemma names that
+ * only trm_orefl - unchanged content - is left. This lemma names that
  * excluded-middle case directly: a word that is owned by no one but the
  * calling subject, carries no Write authority, is not a global exception,
  * and is not a live IPC-buffer target, keeps the same value across any
