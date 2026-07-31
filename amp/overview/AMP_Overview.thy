@@ -47,33 +47,32 @@ lemma REQ_ISO_1_kernel_step_confines_unauthorized_memory:
 section "2. Messaging"
 
 text \<open>
-  No result yet. See PLAN.md items 3 (shared memory) and 4 (notifications).
+  No result yet. Shared memory and notifications are not designed or
+  proved.
 \<close>
 
 section "3. Durability"
 
 text \<open>
-  No result yet. See PLAN.md item 2 (checked initialization).
+  No result yet. Kernel initialization is not proved.
 \<close>
 
 section "4. What is NOT established"
 
 text \<open>
-  \<^item> The composition theorem itself (PLAN.md item 1) -- REQ-ISO-1 is one of
-    its two necessary ingredients, not the theorem.
-  \<^item> The hardware memory-disjointness assumption (PLAN.md item 10) is not
-    yet named or validated against the real PolarFire SoC memory system.
+  \<^item> The composition theorem itself -- REQ-ISO-1 is one of its two
+    necessary ingredients, not the theorem.
+  \<^item> The hardware memory-disjointness assumption is not yet named or
+    validated against the real PolarFire SoC memory system.
   \<^item> REQ-ISO-1 is proved only at the abstract-specification level. It says
     nothing yet about the real, compiled C kernel -- that transport is
-    identified but not attempted (PLAN.md item 9's continuation).
+    identified but not attempted.
   \<^item> REQ-ISO-1 covers only UserData (ordinary) memory. Kernel-object memory
-    (PLAN.md item 11) and device/MMIO memory (PLAN.md item 12) are separate,
-    open cases.
+    and device/MMIO memory are separate, open cases.
   \<^item> No claim about shared memory, notifications, or any application-level
-    channel (PLAN.md items 3, 4) -- none of that is designed yet, let alone
-    proved.
-  \<^item> No claim about kernel initialization (PLAN.md item 2) -- REQ-ISO-1 says
-    nothing about how a kernel reaches the state it starts a step from.
+    channel -- none of that is designed yet, let alone proved.
+  \<^item> No claim about kernel initialization -- REQ-ISO-1 says nothing about
+    how a kernel reaches the state it starts a step from.
   \<^item> No claim about timing or other side channels, on any result in this
     file.
   \<^item> No hardware assumption has been named yet at all -- there is currently
