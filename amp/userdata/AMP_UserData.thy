@@ -13,9 +13,9 @@ section "Specification"
 (*
  * No new types or state are introduced here. This theory states a
  * corollary of l4v's existing access-control development
- * (proof/access-control/), at the abstract-specification level only. See
- * PLAN.md item 9's continuation for the remaining C-level transport, which
- * will live in a separate session once attempted.
+ * (proof/access-control/), at the abstract-specification level only. The
+ * remaining design-spec and C-level transport live in separate sessions --
+ * see AMP_UserData_Refine for the abstract-to-design-spec continuation.
  *)
 
 section "Results"
@@ -31,7 +31,7 @@ section "Results"
  * calling subject, carries no Write authority, is not a global exception,
  * and is not a live IPC-buffer target, keeps the same value across any
  * step that satisfies l4v's integrity. This is the per-word fact AMP's
- * frame-rule composition argument (PLAN.md item 1) needs at the
+ * frame-rule composition argument (the composition theorem) needs at the
  * abstract-specification level: one kernel's step cannot change a word
  * outside its own authority.
  *
@@ -44,11 +44,11 @@ section "Results"
  * AMP needs. That composition is a mechanical use_valid application, not
  * separate proof content, so it is not restated as its own lemma here.
  *
- * This is the abstract-specification half of PLAN.md item 9's UserData
- * case. Transporting the same fact to the real C kernel still needs
- * cpspace_user_data_relation, user_mem_relation, user_mem_C_relation, and
- * the refinement chain connecting abstract, executable, and C states for a
- * real call_kernel step (see PLAN.md item 9's continuation).
+ * This is the abstract-specification half of the UserData case. Transporting
+ * the same fact to the real C kernel still needs cpspace_user_data_relation,
+ * user_mem_relation, user_mem_C_relation, and the refinement chain
+ * connecting abstract, executable, and C states for a real call_kernel step
+ * (see AMP_UserData_Refine for the abstract-to-design-spec continuation).
  *)
 lemma integrity_mem_unauthorized_unchanged:
   assumes integ: "integrity aag X st s'"

@@ -19,6 +19,18 @@ Two properties of that cache to keep in mind:
 - **A snapshot, so it can go stale.** A heap is valid only while nothing *below*
   it changes. Edit a theory and every session that imports it must rebuild.
 
+## Invoking a build
+
+Use `scripts/isabelle-build.sh <SessionName>` (from the repo root), not a raw
+`isabelle build` invocation. It runs the exact command below, but also
+hardcodes `L4V_ARCH`/`L4V_PLAT`, refuses a second concurrent build against the
+same heap store, and refuses `-f`/`--force` outright -- `-f` discards every
+cached heap regardless of whether its sources changed, which is how a routine
+rebuild once turned into a 30+ minute rebuild of the whole `HOL` -> ... ->
+`Refine`/`Access` chain. See the script's own header comment for the full
+story and how to do a genuine full rebuild deliberately when one is actually
+needed.
+
 ## Regime A — fast iteration for free (the default here)
 
 Because we control our own session boundaries, each phase's theory lives in its
@@ -30,6 +42,9 @@ export L4V_ARCH=RISCV64 L4V_PLAT=polarfire
 cd l4v
 ./isabelle/bin/isabelle build -d . -v <YourSession>
 ```
+
+(equivalently, and preferably: `scripts/isabelle-build.sh <YourSession>` from
+the repo root -- see "Invoking a build" above)
 
 Measured (attempt 1): with the `ASpec` heap present, editing a session's
 top theory and rebuilding it re-checked that one theory in **~1 s** (≈10 s

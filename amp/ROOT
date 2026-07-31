@@ -17,15 +17,29 @@ chapter "AMP"
  *)
 
 (*
- * PLAN.md item 9, UserData case: the abstract-specification half of
- * transporting call_kernel_integrity to a per-word confinement fact. See
+ * UserData case, abstract-specification level: transports
+ * call_kernel_integrity to a per-word confinement fact. See
  * AMP_UserData.thy's own comments for what this does and does not cover --
- * the C-level transport is separate, still-open work.
+ * the design-spec and C-level transport are separate, still-open work.
  *)
 session AMP_UserData in "userdata" = Access +
   theories
     "AMP_UserData"
     "AMP_UserData_Witnesses"
+
+(*
+ * UserData case, abstract-to-design-spec level: links user_mem (abstract)
+ * to user_mem' (design spec) across a real call_kernel/callKernel step.
+ * Built on Refine rather than on AMP_UserData/Access, since the cited
+ * theorems (kernel_corres, user_mem_relation) live in proof/refine/, not
+ * proof/access-control/. See AMP_UserData_Refine.thy's own comments for
+ * what this does and does not cover -- the design-spec-to-C transport is
+ * separate, still-open work.
+ *)
+session AMP_UserData_Refine in "userdata_refine" = Refine +
+  theories
+    "AMP_UserData_Refine"
+    "AMP_UserData_Refine_Witnesses"
 
 (*
  * The single place documenting AMP's headline, reader-facing results. See
