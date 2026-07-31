@@ -42,6 +42,20 @@ session AMP_UserData_Refine in "userdata_refine" = Refine +
     "AMP_UserData_Refine_Witnesses"
 
 (*
+ * UserData case, design-spec-to-C level: links user_mem' (design spec) to
+ * user_mem_C (C) across a real kernelEntry/kernelEntry_C step. Built on
+ * CRefine, since the cited theorems (entry_refinement_C, user_mem_C_relation)
+ * live in proof/crefine/. See AMP_UserData_Refine_C.thy's own comments for
+ * what this does and does not cover -- assembling this with the
+ * abstract-to-design-spec half into one real C-level UserData confinement
+ * fact is separate, still-open work.
+ *)
+session AMP_UserData_Refine_C in "userdata_refine_c" = CRefine +
+  theories
+    "AMP_UserData_Refine_C"
+    "AMP_UserData_Refine_C_Witnesses"
+
+(*
  * The single place documenting AMP's headline, reader-facing results. See
  * CLAUDE.md's "Where things are" table.
  *)

@@ -6,7 +6,7 @@
 
 (*
  * The single place documenting AMP's headline results. Indexed by
- * requirement, not by work item -- a reader who has never opened PLAN.md
+ * requirement, not by work item - a reader who has never opened PLAN.md
  * must be able to read this file. See CLAUDE.md and the amp-docs skill for
  * the rules governing this file's structure.
  *)
@@ -22,7 +22,7 @@ section "1. Isolation"
  * exception set, or a thread is legitimately receiving it into an IPC
  * buffer. Outside all four of those reasons, the word keeps its value.
  * This is proved at the abstract-specification level, for any kernel step
- * already known to satisfy l4v's integrity guarantee -- in particular a
+ * already known to satisfy l4v's integrity guarantee - in particular a
  * real call_kernel step meeting call_kernel_integrity's precondition. It
  * is the per-word fact the AMP composition theorem needs: one kernel's
  * step cannot change a word outside its own authority, so kernels with
@@ -60,22 +60,28 @@ text \<open>
 section "4. What is NOT established"
 
 text \<open>
-  \<^item> The composition theorem itself -- REQ-ISO-1 is one of its two
+  \<^item> The composition theorem itself - REQ-ISO-1 is one of its two
     necessary ingredients, not the theorem.
   \<^item> The hardware memory-disjointness assumption is not yet named or
     validated against the real PolarFire SoC memory system.
-  \<^item> REQ-ISO-1 is proved only at the abstract-specification level. It says
-    nothing yet about the real, compiled C kernel -- that transport is
-    identified but not attempted.
+  \<^item> REQ-ISO-1 is proved only at the abstract-specification level. Two of
+    the three pieces needed to say the same thing about the real, compiled
+    C kernel now exist, separately: \<open>call_kernel_user_mem_agrees\<close>
+    (abstract-to-design-spec, \<open>AMP_UserData_Refine.thy\<close>) and
+    \<open>kernel_entry_user_mem_C_agrees\<close> (design-spec-to-C,
+    \<open>AMP_UserData_Refine_C.thy\<close>). Nothing has yet composed those two with
+    \<open>integrity_mem_unauthorized_unchanged\<close> into one theorem about a real
+    C-level kernel step, so REQ-ISO-1 still says nothing about the real,
+    compiled C kernel today.
   \<^item> REQ-ISO-1 covers only UserData (ordinary) memory. Kernel-object memory
     and device/MMIO memory are separate, open cases.
   \<^item> No claim about shared memory, notifications, or any application-level
-    channel -- none of that is designed yet, let alone proved.
-  \<^item> No claim about kernel initialization -- REQ-ISO-1 says nothing about
+    channel - none of that is designed yet, let alone proved.
+  \<^item> No claim about kernel initialization - REQ-ISO-1 says nothing about
     how a kernel reaches the state it starts a step from.
   \<^item> No claim about timing or other side channels, on any result in this
     file.
-  \<^item> No hardware assumption has been named yet at all -- there is currently
+  \<^item> No hardware assumption has been named yet at all - there is currently
     no assumption ledger row, because no result in this file has needed one.
 \<close>
 
