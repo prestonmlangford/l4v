@@ -34,9 +34,15 @@ session AMP_UserData in "userdata" = Access +
  * theorems (kernel_corres, user_mem_relation) live in proof/refine/, not
  * proof/access-control/. See AMP_UserData_Refine.thy's own comments for
  * what this does and does not cover -- the design-spec-to-C transport is
- * separate, still-open work.
+ * separate, still-open work. AMP_UserData is added via `sessions` because
+ * the witness theory also witnesses kernel_entry_mem_unauthorized_unchanged
+ * (an AMP_UserData theorem) -- see AMP_UserData_Refine_Witnesses.thy's own
+ * comment for why that witness lives here rather than in AMP_UserData's own
+ * session.
  *)
 session AMP_UserData_Refine in "userdata_refine" = Refine +
+  sessions
+    AMP_UserData
   theories
     "AMP_UserData_Refine"
     "AMP_UserData_Refine_Witnesses"
@@ -56,10 +62,28 @@ session AMP_UserData_Refine_C in "userdata_refine_c" = CRefine +
     "AMP_UserData_Refine_C_Witnesses"
 
 (*
- * The single place documenting AMP's headline, reader-facing results. See
- * CLAUDE.md's "Where things are" table.
+ * UserData case, assembly: composes the abstract-specification,
+ * abstract-to-design-spec, and design-spec-to-C halves above into one
+ * theorem about a real C-level kernelEntry_C step. Built on
+ * AMP_UserData_Refine_C (the richest ancestor, CRefine), with the other
+ * two AMP UserData sessions added via `sessions` so their theorems are
+ * citable here too - see AMP_UserData_Confinement_C.thy's own comments.
  *)
-session AMP_Overview in "overview" = AMP_UserData +
+session AMP_UserData_Confinement_C in "userdata_confinement_c" = AMP_UserData_Refine_C +
+  sessions
+    AMP_UserData
+    AMP_UserData_Refine
+  theories
+    "AMP_UserData_Confinement_C"
+    "AMP_UserData_Confinement_C_Witnesses"
+
+(*
+ * The single place documenting AMP's headline, reader-facing results. Built
+ * on AMP_UserData_Confinement_C (the richest UserData-case session) so its
+ * REQ-ISO-2 entry can cite kernel_entry_user_mem_C_unauthorized_unchanged
+ * directly. See CLAUDE.md's "Where things are" table.
+ *)
+session AMP_Overview in "overview" = AMP_UserData_Confinement_C +
   theories
     "AMP_Overview"
     "AMP_Overview_Witnesses"

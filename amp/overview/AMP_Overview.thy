@@ -11,88 +11,163 @@
  * the rules governing this file's structure.
  *)
 theory AMP_Overview
-imports "AMP_UserData.AMP_UserData"
+imports "AMP_UserData.AMP_UserData" "AMP_UserData_Confinement_C.AMP_UserData_Confinement_C"
 begin
 
 section "1. Isolation"
 
 (*
- * A kernel's step changes a physical memory word only if the kernel owns
- * that word, has explicit Write authority to it, the word is in a fixed
- * exception set, or a thread is legitimately receiving it into an IPC
- * buffer. Outside all four of those reasons, the word keeps its value.
- * This is proved at the abstract-specification level, for any kernel step
- * already known to satisfy l4v's integrity guarantee - in particular a
- * real call_kernel step meeting call_kernel_integrity's precondition. It
- * is the per-word fact the AMP composition theorem needs: one kernel's
- * step cannot change a word outside its own authority, so kernels with
- * disjoint authority cannot interfere with each other's memory regardless
- * of execution order.
+ * A word keeps its value across a kernel step, unless the kernel owns it,
+ * holds Write authority to it, the word is a fixed exception, or a thread
+ * receives it into an IPC buffer. This holds for any step already known to
+ * satisfy l4v's integrity guarantee, such as a real call_kernel step. It is
+ * the per-word fact the AMP composition theorem needs: kernels with
+ * disjoint authority leave each other's memory alone, in any execution
+ * order.
  *
- * Not yet established: the same fact for the real, compiled C kernel (see
- * section 4), for kernel-object memory (TCBs, CNodes, page tables), and
- * for device/MMIO memory.
+ * Holds for the real, compiled kernel too - see the corollary below.
+ * Covers UserData memory; kernel-object and device/MMIO memory are
+ * separate, open cases (section 4).
  *)
 lemma REQ_ISO_1_kernel_step_confines_unauthorized_memory:
+  (* The step already satisfies l4v's integrity guarantee. *)
   assumes "integrity aag X st s'"
+  (* Someone other than the acting subject owns x. *)
   assumes "pasObjectAbs aag x \<noteq> pasSubject aag"
+  (* The acting subject holds no Write authority to x. *)
   assumes "\<not> aag_subjects_have_auth_to {pasSubject aag} aag Write x"
+  (* x is not a fixed global exception. *)
   assumes "x \<notin> X"
+  (* No thread legitimately receives x into an IPC buffer. *)
   assumes "\<And>p'. \<not> (case_option False can_receive_ipc (tcb_states_of_state st p')
-                    \<and> tcb_states_of_state s' p' = Some Running
+                    \<and> tcb_states_of_state s' p' = Some Structures_A.thread_state.Running
                     \<and> x \<in> auth_ipc_buffers st p')"
   shows "underlying_memory (machine_state st) x = underlying_memory (machine_state s') x"
   using assms by (rule integrity_mem_unauthorized_unchanged)
 
+context kernel_m
+begin
+
+(*
+ * REQ-ISO-1 holds for the real, compiled kernel too. l4v's refinement
+ * correspondence shows a real kernelEntry_C step's C-level memory agrees
+ * with an abstract execution's memory, before and after. REQ-ISO-1 then
+ * carries straight over: the C-level word keeps its value because the
+ * abstract word it agrees with keeps its value. Stated as a `corollary`
+ * because that is exactly what it is - no new argument, only that
+ * agreement.
+ *
+ * Most hypotheses below are the standard well-formed-execution bundle
+ * behind REQ-ISO-1's own `integrity` hypothesis one level up. One is new
+ * here: x must stay a mapped user-data frame across the step
+ * (frame_before, frame_after) - see section 4.
+ *)
+corollary REQ_ISO_1_kernel_step_confines_unauthorized_memory_in_the_real_kernel:
+  (* sD is a real, well-formed design-spec state for event e. *)
+  assumes "all_invs' e sD"
+  (* tC is the C state that corresponds to sD. *)
+  assumes "(sD, tC) \<in> rf_sr"
+  (* The fast path is off. *)
+  assumes "fp = False"
+  (* tC' is the result of a real kernelEntry_C step from tC. *)
+  assumes "(tc', tC') \<in> fst (kernelEntry_C fp e tc tC)"
+  (* sA is the abstract state that corresponds to sD. *)
+  assumes "(sA, sD) \<in> state_relation"
+  (* The policy aag faithfully covers sA's real authority. *)
+  assumes "pas_refined aag sA"
+  (* sA satisfies the standard abstract-state invariants. *)
+  assumes "einvs sA"
+  (* sA satisfies the hypervisor-state invariant (always true on RISCV64). *)
+  assumes "valid_cur_hyp sA"
+  (* The current thread runs, unless e is an interrupt. *)
+  assumes "e \<noteq> Interrupt \<longrightarrow> ct_running sA"
+  (* The current thread runs or is idle. *)
+  assumes "ct_running sA \<or> ct_idle sA"
+  (* The scheduler is set to resume the current thread. *)
+  assumes "scheduler_action sA = resume_cur_thread"
+  (* The domain schedule is well-formed and has time left. *)
+  assumes "0 < domain_time sA \<and> valid_domain_list sA"
+  (* sA's domain assignment matches the policy. *)
+  assumes "guarded_pas_domain aag sA"
+  (* sA respects domain separation. *)
+  assumes "domain_sep_inv (pasMaySendIrqs aag) st'' sA"
+  (* The scheduler resumes the current thread - the exact shape call_kernel_integrity needs. *)
+  assumes "schact_is_rct sA"
+  (* The acting subject owns the current thread, when it is active. *)
+  assumes "ct_active sA \<longrightarrow> is_subject aag (cur_thread sA)"
+  (* The policy allows activating threads and editing ready queues. *)
+  assumes "pasMayActivate aag" "pasMayEditReadyQueues aag"
+  (* Someone other than the acting subject owns x. *)
+  assumes "pasObjectAbs aag x \<noteq> pasSubject aag"
+  (* The acting subject holds no Write authority to x. *)
+  assumes "\<not> aag_subjects_have_auth_to {pasSubject aag} aag Write x"
+  (* x is not a fixed global exception. *)
+  assumes "x \<notin> X"
+  (* No thread legitimately receives x into an IPC buffer, on any outcome the step can reach. *)
+  assumes "\<And>tc'' sA' p'. (tc'', sA') \<in> fst (kernel_entry e tc sA) \<Longrightarrow>
+                          \<not> (case_option False can_receive_ipc (tcb_states_of_state sA p')
+                             \<and> tcb_states_of_state sA' p' = Some Structures_A.thread_state.Running
+                             \<and> x \<in> auth_ipc_buffers sA p')"
+  (* x is a mapped user-data frame before the step. *)
+  assumes "in_user_frame x sA"
+  (* x stays a mapped user-data frame on every outcome the step can reach. *)
+  assumes "\<And>tc'' sA'. (tc'', sA') \<in> fst (kernel_entry e tc sA) \<Longrightarrow> in_user_frame x sA'"
+  shows "user_mem_C (globals tC) x = user_mem_C (globals tC') x"
+  using assms by (rule kernel_entry_user_mem_C_unauthorized_unchanged)
+
+end
+
 section "2. Messaging"
 
 text \<open>
-  No result yet. Shared memory and notifications are not designed or
-  proved.
+  No result yet. Shared memory and notifications are still to design.
 \<close>
 
 section "3. Durability"
 
 text \<open>
-  No result yet. Kernel initialization is not proved.
+  No result yet. Kernel initialization is still to prove.
 \<close>
 
 section "4. What is NOT established"
 
 text \<open>
-  \<^item> The composition theorem itself - REQ-ISO-1 is one of its two
-    necessary ingredients, not the theorem.
-  \<^item> The hardware memory-disjointness assumption is not yet named or
-    validated against the real PolarFire SoC memory system.
-  \<^item> REQ-ISO-1 is proved only at the abstract-specification level. Two of
-    the three pieces needed to say the same thing about the real, compiled
-    C kernel now exist, separately: \<open>call_kernel_user_mem_agrees\<close>
-    (abstract-to-design-spec, \<open>AMP_UserData_Refine.thy\<close>) and
-    \<open>kernel_entry_user_mem_C_agrees\<close> (design-spec-to-C,
-    \<open>AMP_UserData_Refine_C.thy\<close>). Nothing has yet composed those two with
-    \<open>integrity_mem_unauthorized_unchanged\<close> into one theorem about a real
-    C-level kernel step, so REQ-ISO-1 still says nothing about the real,
-    compiled C kernel today.
-  \<^item> REQ-ISO-1 covers only UserData (ordinary) memory. Kernel-object memory
+  \<^item> REQ-ISO-1 is one ingredient of the composition theorem, not the
+    composition theorem itself.
+  \<^item> The hardware memory-disjointness assumption still needs a name and a
+    check against the real PolarFire SoC memory system.
+  \<^item> The real-kernel corollary needs the word to stay a mapped user-data
+    frame across the step. Frame-classification stability across a kernel
+    step is a separate, open question in l4v.
+  \<^item> REQ-ISO-1 covers UserData (ordinary) memory only. Kernel-object memory
     and device/MMIO memory are separate, open cases.
-  \<^item> No claim about shared memory, notifications, or any application-level
-    channel - none of that is designed yet, let alone proved.
-  \<^item> No claim about kernel initialization - REQ-ISO-1 says nothing about
-    how a kernel reaches the state it starts a step from.
-  \<^item> No claim about timing or other side channels, on any result in this
+  \<^item> Shared memory, notifications, and application-level channels are
+    still to design.
+  \<^item> Kernel initialization is still open: REQ-ISO-1 takes its starting
+    state as given.
+  \<^item> Timing and other side channels are open, for every result in this
     file.
-  \<^item> No hardware assumption has been named yet at all - there is currently
-    no assumption ledger row, because no result in this file has needed one.
+  \<^item> The assumption ledger is still empty: no result in this file has
+    needed a hardware assumption yet.
 \<close>
 
 section "5. Non-vacuity"
 
 text \<open>
-  REQ-ISO-1's five hypotheses are jointly satisfiable, not merely
-  individually plausible: \<open>pw_integrity_mem_unauthorized_unchanged\<close>
-  (\<open>AMP_UserData_Witnesses.thy\<close>) instantiates them against the real
-  two-domain example system already checked into l4v (\<open>Sys1PAS\<close>/\<open>s1\<close>,
-  \<open>proof/access-control/ExampleSystem.thy\<close>).
+  REQ-ISO-1's five hypotheses hold together, for a real system:
+  \<open>pw_integrity_mem_unauthorized_unchanged\<close> (\<open>AMP_UserData_Witnesses.thy\<close>)
+  checks them against the real two-domain example system already in l4v
+  (\<open>Sys1PAS\<close>/\<open>s1\<close>, \<open>proof/access-control/ExampleSystem.thy\<close>).
+
+  The real-kernel corollary's hypotheses hold together too, with one gap:
+  \<open>pw_kernel_entry_user_mem_C_unauthorized_unchanged\<close>
+  (\<open>AMP_UserData_Confinement_C_Witnesses.thy\<close>) checks every hypothesis
+  except \<open>frame_before\<close>/\<open>frame_after\<close>, against the same \<open>Init_H\<close>-derived
+  state the design-spec and C witnesses already use. Those two stay open:
+  l4v's only checked initial state, \<open>init_A_st\<close>, carves no UserData frames
+  - frame carving happens later, at the root task, not at kernel boot.
+  Closing this needs a checked state further along than kernel boot (see
+  PLAN.md's "Checked initialization").
 \<close>
 
 end
