@@ -42,6 +42,7 @@ lemma REQ_ISO_1_kernel_step_confines_unauthorized_memory:
   assumes "\<And>p'. \<not> (case_option False can_receive_ipc (tcb_states_of_state st p')
                     \<and> tcb_states_of_state s' p' = Some Structures_A.thread_state.Running
                     \<and> x \<in> auth_ipc_buffers st p')"
+  (* The underlying memory at x is unchanged across the kernel step. *)
   shows "underlying_memory (machine_state st) x = underlying_memory (machine_state s') x"
   using assms by (rule integrity_mem_unauthorized_unchanged)
 
@@ -73,9 +74,9 @@ corollary REQ_ISO_1_kernel_step_confines_unauthorized_memory_in_the_real_kernel:
   assumes "(tc', tC') \<in> fst (kernelEntry_C fp e tc tC)"
   (* sA is the abstract state that corresponds to sD. *)
   assumes "(sA, sD) \<in> state_relation"
-  (* The policy aag faithfully covers sA's real authority. *)
+  (* The access authority policy (aag) is refined by sA: aag accurately models all authority in sA. *)
   assumes "pas_refined aag sA"
-  (* sA satisfies the standard abstract-state invariants. *)
+  (* sA satisfies the extended invariants (einvs): standard abstract-state predicates. *)
   assumes "einvs sA"
   (* sA satisfies the hypervisor-state invariant (always true on RISCV64). *)
   assumes "valid_cur_hyp sA"
@@ -89,7 +90,7 @@ corollary REQ_ISO_1_kernel_step_confines_unauthorized_memory_in_the_real_kernel:
   assumes "0 < domain_time sA \<and> valid_domain_list sA"
   (* sA's domain assignment matches the policy. *)
   assumes "guarded_pas_domain aag sA"
-  (* sA respects domain separation. *)
+  (* sA respects domain-separation invariant constraints on IRQ authority. *)
   assumes "domain_sep_inv (pasMaySendIrqs aag) st'' sA"
   (* The scheduler resumes the current thread - the exact shape call_kernel_integrity needs. *)
   assumes "schact_is_rct sA"
@@ -103,7 +104,7 @@ corollary REQ_ISO_1_kernel_step_confines_unauthorized_memory_in_the_real_kernel:
   assumes "\<not> aag_subjects_have_auth_to {pasSubject aag} aag Write x"
   (* x is not a fixed global exception. *)
   assumes "x \<notin> X"
-  (* No thread legitimately receives x into an IPC buffer, on any outcome the step can reach. *)
+  (* No thread can legitimately receive x into an inter-process communication buffer on any step outcome: no thread is in receive-wait state before the step, then running after, with x as an authorized IPC buffer. *)
   assumes "\<And>tc'' sA' p'. (tc'', sA') \<in> fst (kernel_entry e tc sA) \<Longrightarrow>
                           \<not> (case_option False can_receive_ipc (tcb_states_of_state sA p')
                              \<and> tcb_states_of_state sA' p' = Some Structures_A.thread_state.Running
@@ -112,6 +113,7 @@ corollary REQ_ISO_1_kernel_step_confines_unauthorized_memory_in_the_real_kernel:
   assumes "in_user_frame x sA"
   (* x stays a mapped user-data frame on every outcome the step can reach. *)
   assumes "\<And>tc'' sA'. (tc'', sA') \<in> fst (kernel_entry e tc sA) \<Longrightarrow> in_user_frame x sA'"
+  (* The C-level user memory at x remains unchanged across the kernel step. *)
   shows "user_mem_C (globals tC) x = user_mem_C (globals tC') x"
   using assms by (rule kernel_entry_user_mem_C_unauthorized_unchanged)
 

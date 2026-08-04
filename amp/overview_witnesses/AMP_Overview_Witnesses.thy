@@ -5,8 +5,8 @@
  *)
 
 theory AMP_Overview_Witnesses
-imports AMP_Overview "Access.ExampleSystem"
-        "AMP_UserData_Confinement_C.AMP_UserData_Confinement_C_Witnesses"
+imports "AMP_Overview.AMP_Overview" "Access.ExampleSystem"
+        "AMP_UserData_Confinement_C_Witnesses.AMP_UserData_Confinement_C_Witnesses"
 begin
 
 section "Results"

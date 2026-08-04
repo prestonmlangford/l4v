@@ -5,7 +5,7 @@
  *)
 
 theory AMP_UserData_Confinement_C_Witnesses
-imports AMP_UserData_Confinement_C "AInvs.KernelInit_AI" "AInvs.ArchKernelInit_AI" "Refine.KernelInit_R"
+imports "AMP_UserData_Confinement_C.AMP_UserData_Confinement_C" "AInvs.KernelInit_AI" "AInvs.ArchKernelInit_AI" "Refine.KernelInit_R"
 begin
 
 context kernel_m

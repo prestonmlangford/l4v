@@ -68,6 +68,18 @@ session AMP_UserData_Refine_C in "userdata_refine_c" = CRefine +
  * AMP_UserData_Refine_C (the richest ancestor, CRefine), with the other
  * two AMP UserData sessions added via `sessions` so their theorems are
  * citable here too - see AMP_UserData_Confinement_C.thy's own comments.
+ *
+ * Access and Refine/CRefine are sibling branches off AInvs (see
+ * l4v/proof/ROOT), not a single heap lineage -- Isabelle cannot load two
+ * heap images at once, so citing AMP_UserData (Access-based) from a theory
+ * whose session sits on AMP_UserData_Refine_C (CRefine-based) forces this
+ * session to re-elaborate the whole Access proof suite (Retype_AC,
+ * Finalise_AC, Syscall_AC, ...) from source whenever its heap goes stale.
+ * Measured 2026-08-04: ~4:45 elapsed / ~25:00 cpu time. This theory itself
+ * unavoidably pays that cost, since composing across all three lineages is
+ * exactly what it does. Its witnesses do not need to -- see
+ * AMP_UserData_Confinement_C_Witnesses below for why they are a separate
+ * session.
  *)
 session AMP_UserData_Confinement_C in "userdata_confinement_c" = AMP_UserData_Refine_C +
   sessions
@@ -75,6 +87,17 @@ session AMP_UserData_Confinement_C in "userdata_confinement_c" = AMP_UserData_Re
     AMP_UserData_Refine
   theories
     "AMP_UserData_Confinement_C"
+
+(*
+ * Positive witness for AMP_UserData_Confinement_C's composed theorem, kept
+ * out of that session so that adding or editing a witness (routine, and
+ * only getting more frequent as "Checked initialization" work in PLAN.md
+ * progresses) does not re-trigger the expensive Access re-elaboration
+ * documented on AMP_UserData_Confinement_C above. This session only loads
+ * that session's already-built heap.
+ *)
+session AMP_UserData_Confinement_C_Witnesses in "userdata_confinement_c_witnesses" = AMP_UserData_Confinement_C +
+  theories
     "AMP_UserData_Confinement_C_Witnesses"
 
 (*
@@ -86,4 +109,17 @@ session AMP_UserData_Confinement_C in "userdata_confinement_c" = AMP_UserData_Re
 session AMP_Overview in "overview" = AMP_UserData_Confinement_C +
   theories
     "AMP_Overview"
+
+(*
+ * Positive witnesses for AMP_Overview's headline results, kept out of that
+ * session for the same reason as AMP_UserData_Confinement_C_Witnesses
+ * above: witness churn should not force rebuilding anything upstream.
+ * Cites AMP_UserData_Confinement_C_Witnesses directly (a sibling session
+ * sharing the same AMP_UserData_Confinement_C parent, so merging it in is
+ * cheap -- unlike the Access case above, there is no lineage mismatch here).
+ *)
+session AMP_Overview_Witnesses in "overview_witnesses" = AMP_Overview +
+  sessions
+    AMP_UserData_Confinement_C_Witnesses
+  theories
     "AMP_Overview_Witnesses"
