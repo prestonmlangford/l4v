@@ -28,6 +28,20 @@ session AMP_UserData in "userdata" = Access +
     "AMP_UserData_Witnesses"
 
 (*
+ * Device-memory case, abstract-specification level: the integrity_device
+ * analogue of AMP_UserData above. Sits on Access exactly as AMP_UserData
+ * does. No refinement layers -- device_state models user-mapped MMIO only
+ * and has no C-level representation to relate it to
+ * (cuser_user_data_device_relation f ud \<equiv> True); see AMP_DeviceMem.thy's
+ * own comments and PLAN.md's "Device memory: abstract-level confinement
+ * via integrity_device" for why this case stops here.
+ *)
+session AMP_DeviceMem in "devicemem" = Access +
+  theories
+    "AMP_DeviceMem"
+    "AMP_DeviceMem_Witnesses"
+
+(*
  * UserData case, abstract-to-design-spec level: links user_mem (abstract)
  * to user_mem' (design spec) across a real call_kernel/callKernel step.
  * Built on Refine rather than on AMP_UserData/Access, since the cited
