@@ -6,7 +6,7 @@
 
 theory AMP_UserData_Refine_Witnesses
 imports AMP_UserData_Refine "AInvs.KernelInit_AI" "AInvs.ArchKernelInit_AI" "Refine.KernelInit_R"
-  "Refine.EmptyFail_H" "AMP_UserData.AMP_UserData"
+  "Refine.EmptyFail_H" "AMP_UserData.AMP_UserData" "AMP_DeviceMem.AMP_DeviceMem"
 begin
 
 section "Results"
@@ -360,6 +360,129 @@ proof -
     by (rule kernel_entry_mem_unauthorized_unchanged
           [OF pas einv hyp act actidle sched' gpd dsi owns may1 may2 stepA
               not_owned not_written not_global not_ipc])
+
+  show ?thesis
+    using stepA main by (fastforce simp: abs_s_def)
+qed
+
+(*
+ * Positive witness for kernel_entry_device_state_unauthorized_unchanged
+ * (AMP_DeviceMem.thy, session AMP_DeviceMem) - lives here for exactly the
+ * reason pw_kernel_entry_mem_unauthorized_unchanged above does: it needs a
+ * real kernel_entry execution, and AMP_DeviceMem's own session (built on
+ * Access only, deliberately Refine-free, mirroring AMP_UserData) has no way
+ * to exhibit one. Reuses the same Init_H-derived state, the same two gaps,
+ * and the same Gap 4 (aag, x, st'' as free parameters, no checked l4v state
+ * ever had a policy aag checked against it) that
+ * pw_kernel_entry_mem_unauthorized_unchanged carries. Simpler than that
+ * witness in one respect: integrity_device has no IPC clause, so there is
+ * no reach_ipc0 hypothesis and no not_ipc side condition to derive here.
+ *)
+lemma pw_kernel_entry_device_state_unauthorized_unchanged:
+  assumes nonempty: "Init_H \<noteq> {}"
+  assumes pas0: "pas_refined aag (init_A_st :: det_state)"
+  assumes gpd0: "guarded_pas_domain aag (init_A_st :: det_state)"
+  assumes dsi0: "domain_sep_inv (pasMaySendIrqs aag) st'' (init_A_st :: det_state)"
+  assumes owns0: "ct_active (init_A_st :: det_state) \<longrightarrow> is_subject aag (cur_thread (init_A_st :: det_state))"
+  assumes may1: "pasMayActivate aag"
+  assumes may2: "pasMayEditReadyQueues aag"
+  assumes not_owned: "pasObjectAbs aag x \<noteq> pasSubject aag"
+  assumes not_written: "\<not> aag_subjects_have_auth_to {pasSubject aag} aag Write x"
+  shows "\<exists>tc tc' s'.
+           (tc', s') \<in> fst (kernel_entry Interrupt tc (init_A_st :: det_state))
+           \<and> device_state (machine_state (init_A_st :: det_state)) x
+             = device_state (machine_state s') x"
+proof -
+  from nonempty obtain tc0 s' m' e' where mem: "((tc0, s'), m', e') \<in> Init_H"
+    by (metis surj_pair equals0I)
+  have invs'_s': "invs' s'"
+    using ckernel_init_invs mem by fastforce
+  have sch_s': "ksSchedulerAction s' = ResumeCurrentThread"
+    using ckernel_init_sch_norm[OF mem] .
+  have ctr_s': "ct_running' s'"
+    using ckernel_init_ctr[OF mem] .
+  have dt_s': "ksDomainTime s' \<noteq> 0"
+    using ckernel_init_domain_time[OF mem] .
+
+  define abs_s :: det_state where abs_s_def: "abs_s \<equiv> init_A_st"
+  have rel: "(abs_s, s') \<in> state_relation"
+    using init_refinement mem
+    by (fastforce simp: abs_s_def Init_A_def lift_state_relation_def)
+  have mem_A: "((empty_context, abs_s), UserMode, None) \<in> Init_A"
+    by (simp add: abs_s_def Init_A_def)
+  have invs_ctr_s: "invs abs_s \<and> ct_running abs_s"
+    using akernel_init_invs[THEN bspec, OF mem_A] by simp
+  have invs_s: "invs abs_s" using invs_ctr_s by (rule conjunct1)
+  have ctr_s: "ct_running abs_s" using invs_ctr_s by (rule conjunct2)
+  have valid_list_abs: "valid_list abs_s"
+    using valid_list_init by (simp add: abs_s_def)
+  have valid_sched_abs: "valid_sched abs_s"
+    using valid_sched_init by (simp add: abs_s_def)
+  have valid_domain_list_abs: "valid_domain_list abs_s"
+    using valid_domain_list_init by (simp add: abs_s_def)
+  have sched_abs: "scheduler_action abs_s = resume_cur_thread"
+    by (simp add: abs_s_def RISCV64.state_defs)
+  have dt_abs: "0 < domain_time abs_s"
+    by (simp add: abs_s_def RISCV64.state_defs)
+  have dt_s'_pos: "0 < ksDomainTime s'"
+    using dt_s' by (simp add: word_neq_0_conv)
+  have preA: "(einvs and (\<lambda>s. Interrupt \<noteq> Interrupt \<longrightarrow> ct_running s) and (ct_running or ct_idle)
+               and (\<lambda>s. scheduler_action s = resume_cur_thread)
+               and (\<lambda>s. 0 < domain_time s \<and> valid_domain_list s)) abs_s"
+    using invs_s ctr_s valid_list_abs valid_sched_abs valid_domain_list_abs sched_abs dt_abs
+    by (simp add: pred_conj_def)
+  have preH: "(invs' and (\<lambda>s. Interrupt \<noteq> Interrupt \<longrightarrow> ct_running' s) and (ct_running' or ct_idle')
+               and (\<lambda>s. ksSchedulerAction s = ResumeCurrentThread)
+               and (\<lambda>s. 0 < ksDomainTime s)) s'"
+    using invs'_s' ctr_s' sch_s' dt_s'_pos by (simp add: pred_conj_def)
+  have preA_entry: "(einvs and (\<lambda>s. Interrupt \<noteq> Interrupt \<longrightarrow> ct_running s)
+                     and (\<lambda>s. 0 < domain_time s) and valid_domain_list and (ct_running or ct_idle)
+                     and (\<lambda>s. scheduler_action s = resume_cur_thread)) abs_s"
+    using preA by (auto simp add: pred_conj_def)
+  have preH_ec: "(invs' and (\<lambda>s. Interrupt \<noteq> Interrupt \<longrightarrow> ct_running' s)
+                  and (\<lambda>s. 0 < ksDomainTime s) and (ct_running' or ct_idle')
+                  and (\<lambda>s. ksSchedulerAction s = ResumeCurrentThread)) s'"
+    using preH by (auto simp add: pred_conj_def)
+
+  (* Derive a real kernelEntry execution, the same way pw_kernel_entry_user_mem_agrees does above. *)
+  note ec0 = corres_underlyingD[OF entry_corres[of Interrupt empty_context]]
+  note ec1 = ec0[OF rel]
+  note ec2 = ec1[OF preA_entry]
+  note ec3 = ec2[OF preH_ec]
+  have not_fail: "\<not> snd (kernelEntry Interrupt empty_context s')"
+    using ec3 by simp
+  have "fst (kernelEntry Interrupt empty_context s') \<noteq> {}"
+    using not_fail kernelEntry_empty_fail by (fastforce simp add: empty_fail_def)
+  then obtain tc' t' where exec: "(tc', t') \<in> fst (kernelEntry Interrupt empty_context s')"
+    by fastforce
+
+  (* Take the abstract execution kernel_entry_user_mem_agrees's own existential conclusion already gives for exec, rather than deriving one independently. *)
+  note keuma0 = kernel_entry_user_mem_agrees[OF rel]
+  note keuma1 = keuma0[OF preA]
+  note keuma2 = keuma1[OF preH]
+  obtain sA' where stepA: "(tc', sA') \<in> fst (kernel_entry Interrupt empty_context abs_s)"
+    using keuma2[OF exec] by blast
+
+  have einv: "einvs abs_s"
+    using invs_s valid_list_abs valid_sched_abs by (simp add: pred_conj_def)
+  have hyp: "valid_cur_hyp abs_s"
+    by (simp add: RISCV64.valid_cur_hyp_def)
+  have sched': "schact_is_rct abs_s"
+    using sched_abs by (simp add: schact_is_rct_def)
+  have actidle: "ct_active abs_s \<or> ct_idle abs_s"
+    using ctr_s by (auto simp: ct_in_state_def st_tcb_at_def obj_at_def)
+
+  have pas: "pas_refined aag abs_s" using pas0 by (simp add: abs_s_def)
+  have gpd: "guarded_pas_domain aag abs_s" using gpd0 by (simp add: abs_s_def)
+  have dsi: "domain_sep_inv (pasMaySendIrqs aag) st'' abs_s" using dsi0 by (simp add: abs_s_def)
+  have owns: "ct_active abs_s \<longrightarrow> is_subject aag (cur_thread abs_s)" using owns0 by (simp add: abs_s_def)
+  (* Interrupt \<noteq> Interrupt is False, so this holds vacuously. *)
+  have act: "Interrupt \<noteq> Interrupt \<longrightarrow> ct_active abs_s" by simp
+
+  have main: "device_state (machine_state abs_s) x = device_state (machine_state sA') x"
+    by (rule kernel_entry_device_state_unauthorized_unchanged
+          [OF pas einv hyp act actidle sched' gpd dsi owns may1 may2 stepA
+              not_owned not_written])
 
   show ?thesis
     using stepA main by (fastforce simp: abs_s_def)

@@ -48,15 +48,17 @@ session AMP_DeviceMem in "devicemem" = Access +
  * theorems (kernel_corres, user_mem_relation) live in proof/refine/, not
  * proof/access-control/. See AMP_UserData_Refine.thy's own comments for
  * what this does and does not cover -- the design-spec-to-C transport is
- * separate, still-open work. AMP_UserData is added via `sessions` because
- * the witness theory also witnesses kernel_entry_mem_unauthorized_unchanged
- * (an AMP_UserData theorem) -- see AMP_UserData_Refine_Witnesses.thy's own
- * comment for why that witness lives here rather than in AMP_UserData's own
- * session.
+ * separate, still-open work. AMP_UserData and AMP_DeviceMem are added via
+ * `sessions` because the witness theory also witnesses
+ * kernel_entry_mem_unauthorized_unchanged (an AMP_UserData theorem) and
+ * kernel_entry_device_state_unauthorized_unchanged (an AMP_DeviceMem
+ * theorem) -- see AMP_UserData_Refine_Witnesses.thy's own comment for why
+ * those witnesses live here rather than in their own sessions.
  *)
 session AMP_UserData_Refine in "userdata_refine" = Refine +
   sessions
     AMP_UserData
+    AMP_DeviceMem
   theories
     "AMP_UserData_Refine"
     "AMP_UserData_Refine_Witnesses"
